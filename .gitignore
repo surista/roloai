@@ -1,0 +1,23 @@
+node_modules/
+.DS_Store
+
+# Web
+web/dist/
+
+# Mobile / Expo
+mobile/.expo/
+mobile/ios/
+mobile/android/
+mobile/*.ipa
+mobile/*.aab
+mobile/*.apk
+
+# Firebase
+.firebase/
+firebase-debug.log
+firebase-debug.*.log
+*.env
+.env.local
+
+# Firebase service account keys — never commit
+*-firebase-adminsdk-*.json

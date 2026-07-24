@@ -1,0 +1,207 @@
+:root {
+  color-scheme: light dark;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+
+body {
+  margin: 0;
+  background: light-dark(#f7f7f8, #111);
+  color: light-dark(#111, #f2f2f2);
+}
+
+button {
+  font: inherit;
+}
+
+.login-page {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.login-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 320px;
+  padding: 24px;
+}
+
+.login-form h1 {
+  text-align: center;
+  margin-bottom: 12px;
+}
+
+.login-form input {
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid light-dark(#ccc, #444);
+  background: light-dark(#fff, #1c1c1e);
+  color: inherit;
+  font-size: 15px;
+}
+
+.login-form button,
+.primary-button {
+  background: light-dark(#111, #fff);
+  color: light-dark(#fff, #111);
+  border: none;
+  border-radius: 8px;
+  padding: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.error {
+  color: #d33;
+  font-size: 14px;
+}
+
+.page-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 20px 24px 0;
+}
+
+.link-button {
+  background: none;
+  border: none;
+  color: #0a7cff;
+  cursor: pointer;
+  padding: 0;
+  font-size: 14px;
+}
+
+.link-button.destructive {
+  color: #d33;
+}
+
+.filters {
+  padding: 16px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.search-input {
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid light-dark(#ccc, #444);
+  background: light-dark(#fff, #1c1c1e);
+  color: inherit;
+  font-size: 15px;
+  max-width: 420px;
+}
+
+.tag-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.tag-chip {
+  border: 1px solid light-dark(#ccc, #444);
+  background: light-dark(#fff, #1c1c1e);
+  color: inherit;
+  border-radius: 999px;
+  padding: 6px 14px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.tag-chip.active {
+  background: light-dark(#111, #fff);
+  color: light-dark(#fff, #111);
+  border-color: transparent;
+}
+
+.empty {
+  text-align: center;
+  color: #888;
+  margin-top: 60px;
+}
+
+.card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 16px;
+  padding: 8px 24px 40px;
+}
+
+.card-tile {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid light-dark(#e2e2e2, #2c2c2e);
+  border-radius: 12px;
+  overflow: hidden;
+  text-decoration: none;
+  color: inherit;
+  background: light-dark(#fff, #1c1c1e);
+}
+
+.card-thumb {
+  width: 100%;
+  height: 140px;
+  object-fit: cover;
+  background: light-dark(#eee, #2c2c2e);
+}
+
+.card-thumb-placeholder {
+  display: block;
+}
+
+.card-tile-body {
+  padding: 12px;
+}
+
+.card-name {
+  font-weight: 600;
+}
+
+.card-subtitle {
+  color: #888;
+  font-size: 13px;
+  margin-top: 2px;
+}
+
+.card-detail-page {
+  max-width: 480px;
+  margin: 0 auto;
+  padding: 20px 24px 60px;
+}
+
+.card-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin-top: 16px;
+}
+
+.card-form-preview {
+  width: 100%;
+  max-height: 220px;
+  object-fit: cover;
+  border-radius: 10px;
+  background: light-dark(#eee, #2c2c2e);
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+  color: #888;
+}
+
+.field input,
+.field textarea {
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid light-dark(#ccc, #444);
+  background: light-dark(#fff, #1c1c1e);
+  color: inherit;
+  font-size: 15px;
+  font-family: inherit;
+}
