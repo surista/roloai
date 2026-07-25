@@ -63,13 +63,17 @@ cd mobile
 npx expo start --dev-client
 ```
 
-Production build (for TestFlight / App Store), from the repo root — this bumps the bug/patch version, builds locally, and auto-submits to App Store Connect in one shot:
+Production build (for TestFlight / App Store), from the repo root — this bumps the bug/patch version, builds locally, then submits the resulting `.ipa` to App Store Connect:
 
 ```
 npm run deploy:ios
 ```
 
-Note: the very first time this runs, `eas submit` won't have an existing App Store Connect app record to target (no `ascAppId` is configured in `mobile/eas.json`), so it'll prompt interactively to create one. After that first run it's fully non-interactive.
+(`eas build --local` and `--auto-submit` can't be combined — EAS rejects that combo — so this runs as two separate `eas build` / `eas submit` steps instead.) Fully non-interactive: the app is already registered in App Store Connect (`ascAppId` set in `mobile/eas.json`) and the distribution certificate/provisioning profile are already set up on Expo's servers from the first build.
+
+New builds land in [TestFlight](https://appstoreconnect.apple.com/apps/6794496488/testflight/ios) under Apple's processing (~5-10 min) before they're installable, and are auto-assigned to the "Team (Expo)" internal testing group — accept the invite once from the TestFlight app or the invite email, and future builds just show up as updates.
+
+**`EXPO_PUBLIC_*` env vars**: `eas build` (even `--local`) resolves these from EAS's own server-side environment store per build profile, *not* from `mobile/.env` — the local file only matters for `expo start`/dev-client. The Firebase config vars are already pushed to all three EAS environments (production/preview/development) via `eas env:create`; if a new `EXPO_PUBLIC_*` var is ever added, push it the same way or it'll be `undefined` in built apps (`eas env:list production` to check what's there).
 
 ## Versioning
 

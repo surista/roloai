@@ -21,6 +21,7 @@ module.exports = {
       buildNumber: BUILD_NUMBER,
       supportsTablet: false,
       infoPlist: {
+        ITSAppUsesNonExemptEncryption: false,
         NSCameraUsageDescription:
           'RoloAI uses the camera to photograph business cards and scan QR codes so it can save contact details.',
       },
@@ -29,5 +30,10 @@ module.exports = {
       favicon: './assets/favicon.png',
     },
     plugins: ['expo-camera'],
+    extra: {
+      eas: {
+        projectId: 'bda18c22-85c2-4d1b-b89e-066d31810f77',
+      },
+    },
   },
 };

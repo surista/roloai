@@ -1,7 +1,7 @@
 {
   "name": "roloai",
   "private": true,
-  "version": "1.01.01",
+  "version": "1.01.03",
   "workspaces": [
     "shared",
     "web",
@@ -13,7 +13,7 @@
     "deploy:web": "npm run build --workspace web && firebase deploy --only hosting",
     "start:mobile": "npm run start --workspace mobile",
     "build:mobile:ios": "npm run build:ios --workspace mobile",
-    "deploy:ios": "npm run version:bug && cd mobile && eas build --platform ios --profile production --local --auto-submit",
+    "deploy:ios": "npm run version:bug && cd mobile && eas build --platform ios --profile production --local && eas submit --platform ios --profile production --path \"$(ls -t build-*.ipa 2>/dev/null | head -1)\"",
     "version:bug": "node scripts/version.js bug",
     "version:minor": "node scripts/version.js minor",
     "version:major": "node scripts/version.js major"

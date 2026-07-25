@@ -1,6 +1,6 @@
 {
   "name": "mobile",
-  "version": "1.01.01",
+  "version": "1.01.03",
   "main": "index.ts",
   "dependencies": {
     "@roloai/shared": "*",
@@ -29,7 +29,8 @@
     "ios": "expo start --ios",
     "web": "expo start --web",
     "build:ios:dev": "eas build --platform ios --profile development --local",
-    "build:ios": "eas build --platform ios --profile production --local"
+    "build:ios": "eas build --platform ios --profile production --local",
+    "submit:ios": "eas submit --platform ios --profile production --path \"$(ls -t build-*.ipa 2>/dev/null | head -1)\""
   },
   "private": true
 }

@@ -1,6 +1,7 @@
 {
   "cli": {
-    "version": ">= 5.0.0"
+    "version": ">= 5.0.0",
+    "appVersionSource": "local"
   },
   "build": {
     "development": {
@@ -13,7 +14,8 @@
     "production": {
       "ios": {
         "appleId": "surista@gmail.com",
-        "appleTeamId": "N7TWCNBX6C"
+        "appleTeamId": "N7TWCNBX6C",
+        "ascAppId": "6794496488"
       }
     }
   }
