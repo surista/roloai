@@ -1,36 +1,11 @@
 import React, { useState } from 'react';
 import { View, Text, Pressable, StyleSheet, ActivityIndicator, Alert } from 'react-native';
 import { CameraView, useCameraPermissions, type BarcodeScanningResult } from 'expo-camera';
-import { ImageManipulator, SaveFormat } from 'expo-image-manipulator';
-import DocumentScanner, { ResponseType, ScanDocumentResponseStatus } from 'react-native-document-scanner-plugin';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../navigation/types';
 import { parseQrPayload } from '../lib/parseCard';
 import { extractCard } from '../lib/functions';
-
-async function prepareImageForUpload(uri: string): Promise<string> {
-  const context = ImageManipulator.manipulate(uri);
-  context.resize({ width: 1600, height: null });
-  const rendered = await context.renderAsync();
-  const result = await rendered.saveAsync({
-    format: SaveFormat.JPEG,
-    compress: 0.7,
-    base64: true,
-  });
-  if (!result.base64) throw new Error('Failed to encode image');
-  return result.base64;
-}
-
-async function scanCardEdge(): Promise<string | null> {
-  const { scannedImages, status } = await DocumentScanner.scanDocument({
-    responseType: ResponseType.ImageFilePath,
-    croppedImageQuality: 90,
-  });
-  if (status === ScanDocumentResponseStatus.Cancel || !scannedImages?.length) {
-    return null;
-  }
-  return scannedImages[0];
-}
+import { scanCardEdge, prepareImageForUpload } from '../lib/documentScanner';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Scan'>;
 type Mode = 'photo' | 'qr';

@@ -5,7 +5,7 @@ import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { Card } from '@roloai/shared';
 import type { RootStackParamList } from '../navigation/types';
 import { db } from '../lib/firebase';
-import { deleteCard, updateCard } from '../lib/cards';
+import { deleteCard, updateCard, updateCardImage } from '../lib/cards';
 import CardForm from '../components/CardForm';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'CardDetail'>;
@@ -57,6 +57,10 @@ export default function CardDetailScreen({ route, navigation }: Props) {
       saveLabel="Save Changes"
       onSave={async (fields) => {
         await updateCard(cardId, fields);
+      }}
+      onRetakePhoto={async (side, localUri) => {
+        const previousUrl = side === 'front' ? card.imageUrl : card.imageBackUrl;
+        await updateCardImage(cardId, localUri, side, previousUrl || undefined);
       }}
       extraAction={{ label: 'Delete Card', onPress: handleDelete, destructive: true }}
     />

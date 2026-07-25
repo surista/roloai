@@ -29,6 +29,8 @@ Also done: Email/Password sign-in is enabled, and the one user account is create
 
 Tapping "Scan Card" launches Apple's built-in document scanner (VisionKit's `VNDocumentCameraViewController`, via `react-native-document-scanner-plugin`) — the same tech behind the Notes app's "Scan Documents" feature. It detects the card's edges live, lets you adjust corners if needed, and returns an already perspective-corrected, cropped image. No custom edge-detection code to maintain.
 
+On an already-saved card, the "Retake" / "Add Photo" controls next to Front/Back in the mobile app relaunch the same scanner for just that side — it replaces the image in Storage/Firestore (deleting the old file) without touching the text fields, since a photo retake shouldn't silently overwrite edits you've already made to the extracted details.
+
 ## Card extraction (Cloud Function)
 
 Scanning a card sends the photo(s) to the `extractCard` callable function (`functions/src/index.ts`), which calls Claude (`claude-sonnet-5`, vision + structured outputs) to read the card and return the parsed fields directly — no on-device OCR or regex guessing. When both a front and back photo are captured (common for bilingual cards, e.g. English/Japanese), both images go in one request so Claude can merge them into a single coherent record instead of parsing each side independently.

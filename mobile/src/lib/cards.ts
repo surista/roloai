@@ -10,7 +10,7 @@ import {
   Timestamp,
   updateDoc,
 } from 'firebase/firestore';
-import { getDownloadURL, ref, uploadBytes } from 'firebase/storage';
+import { deleteObject, getDownloadURL, ref, uploadBytes } from 'firebase/storage';
 import { stripUndefined, type Card, type CardDraft } from '@roloai/shared';
 import { db, storage } from './firebase';
 
@@ -69,6 +69,30 @@ export async function createCard(
 
 export async function updateCard(id: string, changes: Partial<CardDraft>): Promise<void> {
   await updateDoc(doc(db, 'cards', id), { ...stripUndefined(changes), updatedAt: serverTimestamp() });
+}
+
+export async function updateCardImage(
+  id: string,
+  localUri: string,
+  side: 'front' | 'back',
+  previousUrl?: string
+): Promise<string> {
+  const url = await uploadCardImage(id, localUri, side);
+  await updateDoc(doc(db, 'cards', id), {
+    [side === 'front' ? 'imageUrl' : 'imageBackUrl']: url,
+    updatedAt: serverTimestamp(),
+  });
+
+  if (previousUrl) {
+    // Best-effort cleanup of the replaced file — not worth failing the retake over.
+    try {
+      await deleteObject(ref(storage, previousUrl));
+    } catch (e) {
+      console.warn('Could not delete previous card image:', e);
+    }
+  }
+
+  return url;
 }
 
 export async function deleteCard(id: string): Promise<void> {

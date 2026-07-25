@@ -12,6 +12,7 @@ import {
 } from 'react-native';
 import type { CardDraft } from '@roloai/shared';
 import ImageViewerModal from './ImageViewerModal';
+import { scanCardEdge } from '../lib/documentScanner';
 
 function joinPhones(phones: { number: string }[]): string {
   return phones.map((p) => p.number).join(', ');
@@ -32,10 +33,20 @@ interface Props {
   backImageUri?: string;
   saveLabel: string;
   onSave: (fields: Omit<CardDraft, 'imageUrl' | 'source' | 'rawOcrText'>) => Promise<void>;
+  /** When provided, shows Retake/Add Photo controls for an already-saved card. */
+  onRetakePhoto?: (side: 'front' | 'back', localUri: string) => Promise<void>;
   extraAction?: { label: string; onPress: () => void; destructive?: boolean };
 }
 
-export default function CardForm({ draft, imageUri, backImageUri, saveLabel, onSave, extraAction }: Props) {
+export default function CardForm({
+  draft,
+  imageUri,
+  backImageUri,
+  saveLabel,
+  onSave,
+  onRetakePhoto,
+  extraAction,
+}: Props) {
   const [firstName, setFirstName] = useState(draft.firstName);
   const [lastName, setLastName] = useState(draft.lastName);
   const [jobTitle, setJobTitle] = useState(draft.jobTitle ?? '');
@@ -48,11 +59,27 @@ export default function CardForm({ draft, imageUri, backImageUri, saveLabel, onS
   const [tagsText, setTagsText] = useState(draft.tags.join(', '));
   const [saving, setSaving] = useState(false);
   const [viewerIndex, setViewerIndex] = useState<number | null>(null);
+  const [retakingSide, setRetakingSide] = useState<'front' | 'back' | null>(null);
 
   const viewerImages = [
     imageUri && { uri: imageUri, label: 'Front' },
     backImageUri && { uri: backImageUri, label: 'Back' },
   ].filter((img): img is { uri: string; label: string } => Boolean(img));
+
+  const handleRetake = async (side: 'front' | 'back') => {
+    if (!onRetakePhoto || retakingSide) return;
+    setRetakingSide(side);
+    try {
+      const uri = await scanCardEdge();
+      if (!uri) return;
+      await onRetakePhoto(side, uri);
+    } catch (e) {
+      console.error('Retake failed:', e);
+      Alert.alert('Retake failed', 'Check your connection and try again.');
+    } finally {
+      setRetakingSide(null);
+    }
+  };
 
   const handleSave = async () => {
     if (!firstName.trim() && !lastName.trim()) {
@@ -83,21 +110,56 @@ export default function CardForm({ draft, imageUri, backImageUri, saveLabel, onS
 
   return (
     <ScrollView contentContainerStyle={styles.container}>
-      {imageUri && (
-        <>
-          <Text style={styles.label}>Front</Text>
-          <Pressable onPress={() => setViewerIndex(0)}>
-            <Image source={{ uri: imageUri }} style={styles.preview} />
-          </Pressable>
-        </>
+      {(imageUri || onRetakePhoto) && (
+        <View style={styles.imageBlock}>
+          <View style={styles.imageHeader}>
+            <Text style={styles.label}>Front</Text>
+            {onRetakePhoto && (
+              <Pressable onPress={() => handleRetake('front')} disabled={retakingSide !== null}>
+                {retakingSide === 'front' ? (
+                  <ActivityIndicator size="small" />
+                ) : (
+                  <Text style={styles.retakeText}>{imageUri ? 'Retake' : 'Add Photo'}</Text>
+                )}
+              </Pressable>
+            )}
+          </View>
+          {imageUri ? (
+            <Pressable onPress={() => setViewerIndex(0)}>
+              <Image source={{ uri: imageUri }} style={styles.preview} />
+            </Pressable>
+          ) : (
+            <View style={[styles.preview, styles.previewEmpty]}>
+              <Text style={styles.previewEmptyText}>No front photo yet</Text>
+            </View>
+          )}
+        </View>
       )}
-      {backImageUri && (
-        <>
-          <Text style={styles.label}>Back</Text>
-          <Pressable onPress={() => setViewerIndex(1)}>
-            <Image source={{ uri: backImageUri }} style={styles.preview} />
-          </Pressable>
-        </>
+
+      {(backImageUri || onRetakePhoto) && (
+        <View style={styles.imageBlock}>
+          <View style={styles.imageHeader}>
+            <Text style={styles.label}>Back</Text>
+            {onRetakePhoto && (
+              <Pressable onPress={() => handleRetake('back')} disabled={retakingSide !== null}>
+                {retakingSide === 'back' ? (
+                  <ActivityIndicator size="small" />
+                ) : (
+                  <Text style={styles.retakeText}>{backImageUri ? 'Retake' : 'Add Photo'}</Text>
+                )}
+              </Pressable>
+            )}
+          </View>
+          {backImageUri ? (
+            <Pressable onPress={() => setViewerIndex(imageUri ? 1 : 0)}>
+              <Image source={{ uri: backImageUri }} style={styles.preview} />
+            </Pressable>
+          ) : (
+            <View style={[styles.preview, styles.previewEmpty]}>
+              <Text style={styles.previewEmptyText}>No back photo yet</Text>
+            </View>
+          )}
+        </View>
       )}
 
       <ImageViewerModal
@@ -173,9 +235,19 @@ function Field(props: {
 
 const styles = StyleSheet.create({
   container: { padding: 20, gap: 4, paddingBottom: 48 },
-  preview: { width: '100%', height: 180, borderRadius: 10, marginBottom: 16, backgroundColor: '#eee' },
+  imageBlock: { marginBottom: 16 },
+  imageHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 4,
+  },
+  preview: { width: '100%', height: 180, borderRadius: 10, backgroundColor: '#eee' },
+  previewEmpty: { alignItems: 'center', justifyContent: 'center' },
+  previewEmptyText: { color: '#999', fontSize: 14 },
+  retakeText: { color: '#0a7cff', fontWeight: '600', fontSize: 14 },
   field: { marginBottom: 14 },
-  label: { fontSize: 13, color: '#666', marginBottom: 4 },
+  label: { fontSize: 13, color: '#666' },
   input: { borderWidth: 1, borderColor: '#ccc', borderRadius: 8, padding: 10, fontSize: 16 },
   multiline: { minHeight: 80, textAlignVertical: 'top' },
   saveButton: {
