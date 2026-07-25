@@ -5,7 +5,8 @@ import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../navigation/types';
 import { parseQrPayload } from '../lib/parseCard';
 import { extractCard } from '../lib/functions';
-import { scanCardEdge, prepareImageForUpload } from '../lib/documentScanner';
+import { prepareImageForUpload } from '../lib/documentScanner';
+import { useScanWithReview } from '../lib/useScanWithReview';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Scan'>;
 type Mode = 'photo' | 'qr';
@@ -15,6 +16,7 @@ export default function ScanScreen({ navigation }: Props) {
   const [mode, setMode] = useState<Mode>('photo');
   const [busy, setBusy] = useState(false);
   const [qrLocked, setQrLocked] = useState(false);
+  const { scan, reviewModal } = useScanWithReview();
 
   const finishWithPhotos = async (frontPhotoUri: string, backPhotoUri?: string) => {
     setBusy(true);
@@ -35,13 +37,13 @@ export default function ScanScreen({ navigation }: Props) {
   };
 
   const handleScanBack = async (frontUri: string) => {
-    const backUri = await scanCardEdge();
+    const backUri = await scan('Back of card');
     await finishWithPhotos(frontUri, backUri ?? undefined);
   };
 
   const handleScanFront = async () => {
     if (busy) return;
-    const frontUri = await scanCardEdge();
+    const frontUri = await scan('Front of card');
     if (!frontUri) return;
 
     Alert.alert(
@@ -118,6 +120,8 @@ export default function ScanScreen({ navigation }: Props) {
       </View>
 
       {mode === 'qr' && <Text style={styles.hint}>Point the camera at a QR code on the card</Text>}
+
+      {reviewModal}
     </View>
   );
 }

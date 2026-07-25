@@ -12,7 +12,7 @@ import {
 } from 'react-native';
 import type { CardDraft } from '@roloai/shared';
 import ImageViewerModal from './ImageViewerModal';
-import { scanCardEdge } from '../lib/documentScanner';
+import { useScanWithReview } from '../lib/useScanWithReview';
 
 function joinPhones(phones: { number: string }[]): string {
   return phones.map((p) => p.number).join(', ');
@@ -60,6 +60,7 @@ export default function CardForm({
   const [saving, setSaving] = useState(false);
   const [viewerIndex, setViewerIndex] = useState<number | null>(null);
   const [retakingSide, setRetakingSide] = useState<'front' | 'back' | null>(null);
+  const { scan, reviewModal } = useScanWithReview();
 
   const viewerImages = [
     imageUri && { uri: imageUri, label: 'Front' },
@@ -70,7 +71,7 @@ export default function CardForm({
     if (!onRetakePhoto || retakingSide) return;
     setRetakingSide(side);
     try {
-      const uri = await scanCardEdge();
+      const uri = await scan(side === 'front' ? 'Front of card' : 'Back of card');
       if (!uri) return;
       await onRetakePhoto(side, uri);
     } catch (e) {
@@ -168,6 +169,7 @@ export default function CardForm({
         initialIndex={viewerIndex ?? 0}
         onClose={() => setViewerIndex(null)}
       />
+      {reviewModal}
 
       <Field label="First name" value={firstName} onChangeText={setFirstName} />
       <Field label="Last name" value={lastName} onChangeText={setLastName} />
