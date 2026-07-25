@@ -1,6 +1,6 @@
 # RoloAI
 
-A personal replacement for CamCard: scan business cards on iPhone (photo or QR code, front and optionally back), have Claude read the card and extract structured contact details, review/correct on device, and store everything in Firebase. A companion web app lets you search, view, and edit everything from a browser.
+A personal replacement for CamCard: scan business cards on iPhone with automatic edge detection and cropping (Apple's document scanner, front and optionally back), have Claude read the card and extract structured contact details, review/correct on device, and store everything in Firebase. A companion web app lets you search, view, and edit everything from a browser.
 
 ## Architecture
 
@@ -24,6 +24,10 @@ Done already:
 - Blaze plan active, Cloud Storage bucket provisioned, and `storage.rules` deployed (auth required on `cards/{cardId}/{fileName}`).
 
 Also done: Email/Password sign-in is enabled, and the one user account is created. The backend is fully live.
+
+## Card capture
+
+Tapping "Scan Card" launches Apple's built-in document scanner (VisionKit's `VNDocumentCameraViewController`, via `react-native-document-scanner-plugin`) — the same tech behind the Notes app's "Scan Documents" feature. It detects the card's edges live, lets you adjust corners if needed, and returns an already perspective-corrected, cropped image. No custom edge-detection code to maintain.
 
 ## Card extraction (Cloud Function)
 

@@ -1,7 +1,8 @@
-import React, { useRef, useState } from 'react';
+import React, { useState } from 'react';
 import { View, Text, Pressable, StyleSheet, ActivityIndicator, Alert } from 'react-native';
 import { CameraView, useCameraPermissions, type BarcodeScanningResult } from 'expo-camera';
 import { ImageManipulator, SaveFormat } from 'expo-image-manipulator';
+import DocumentScanner, { ResponseType, ScanDocumentResponseStatus } from 'react-native-document-scanner-plugin';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../navigation/types';
 import { parseQrPayload } from '../lib/parseCard';
@@ -20,37 +21,25 @@ async function prepareImageForUpload(uri: string): Promise<string> {
   return result.base64;
 }
 
+async function scanCardEdge(): Promise<string | null> {
+  const { scannedImages, status } = await DocumentScanner.scanDocument({
+    responseType: ResponseType.ImageFilePath,
+    croppedImageQuality: 90,
+  });
+  if (status === ScanDocumentResponseStatus.Cancel || !scannedImages?.length) {
+    return null;
+  }
+  return scannedImages[0];
+}
+
 type Props = NativeStackScreenProps<RootStackParamList, 'Scan'>;
 type Mode = 'photo' | 'qr';
-type CaptureStage = 'front' | 'back';
 
 export default function ScanScreen({ navigation }: Props) {
   const [permission, requestPermission] = useCameraPermissions();
   const [mode, setMode] = useState<Mode>('photo');
   const [busy, setBusy] = useState(false);
   const [qrLocked, setQrLocked] = useState(false);
-  const [captureStage, setCaptureStage] = useState<CaptureStage>('front');
-  const [frontUri, setFrontUri] = useState<string | null>(null);
-  const cameraRef = useRef<CameraView>(null);
-
-  if (!permission) return <View style={styles.container} />;
-
-  if (!permission.granted) {
-    return (
-      <View style={styles.container}>
-        <Text style={styles.permissionText}>RoloAI needs camera access to scan cards.</Text>
-        <Pressable style={styles.button} onPress={requestPermission}>
-          <Text style={styles.buttonText}>Grant Camera Access</Text>
-        </Pressable>
-      </View>
-    );
-  }
-
-  const resetCapture = () => {
-    setBusy(false);
-    setCaptureStage('front');
-    setFrontUri(null);
-  };
 
   const finishWithPhotos = async (frontPhotoUri: string, backPhotoUri?: string) => {
     setBusy(true);
@@ -66,46 +55,28 @@ export default function ScanScreen({ navigation }: Props) {
     } catch (e) {
       Alert.alert('Scan failed', 'Could not read the card. Check your connection and try again.');
     } finally {
-      resetCapture();
+      setBusy(false);
     }
   };
 
-  const handleTakePhoto = async () => {
-    if (!cameraRef.current || busy) return;
+  const handleScanBack = async (frontUri: string) => {
+    const backUri = await scanCardEdge();
+    await finishWithPhotos(frontUri, backUri ?? undefined);
+  };
 
-    if (captureStage === 'front') {
-      setBusy(true);
-      try {
-        const photo = await cameraRef.current.takePictureAsync({ quality: 0.8 });
-        if (!photo) return;
-        setFrontUri(photo.uri);
-        setBusy(false);
-        setCaptureStage('back');
-        Alert.alert(
-          'Front captured',
-          'Many cards have text on both sides (e.g. English/Japanese) — take a photo of the back too?',
-          [
-            { text: 'Skip', style: 'cancel', onPress: () => finishWithPhotos(photo.uri) },
-            { text: 'Add Back Photo', onPress: () => {} },
-          ]
-        );
-      } catch (e) {
-        Alert.alert('Scan failed', 'Could not read the card. Try again with better lighting.');
-        resetCapture();
-      }
-      return;
-    }
+  const handleScanFront = async () => {
+    if (busy) return;
+    const frontUri = await scanCardEdge();
+    if (!frontUri) return;
 
-    // captureStage === 'back'
-    setBusy(true);
-    try {
-      const photo = await cameraRef.current.takePictureAsync({ quality: 0.8 });
-      if (!photo || !frontUri) return;
-      await finishWithPhotos(frontUri, photo.uri);
-    } catch (e) {
-      Alert.alert('Scan failed', 'Could not read the back photo. Try again.');
-      resetCapture();
-    }
+    Alert.alert(
+      'Front captured',
+      'Many cards have text on both sides (e.g. English/Japanese) — scan the back too?',
+      [
+        { text: 'Skip', style: 'cancel', onPress: () => finishWithPhotos(frontUri) },
+        { text: 'Scan Back', onPress: () => handleScanBack(frontUri) },
+      ]
+    );
   };
 
   const handleBarcodeScanned = (result: BarcodeScanningResult) => {
@@ -117,12 +88,38 @@ export default function ScanScreen({ navigation }: Props) {
 
   return (
     <View style={styles.container}>
-      <CameraView
-        ref={cameraRef}
-        style={styles.camera}
-        barcodeScannerSettings={mode === 'qr' ? { barcodeTypes: ['qr'] } : undefined}
-        onBarcodeScanned={mode === 'qr' ? handleBarcodeScanned : undefined}
-      />
+      {mode === 'qr' &&
+        (!permission ? null : !permission.granted ? (
+          <View style={styles.permissionContainer}>
+            <Text style={styles.permissionText}>RoloAI needs camera access to scan QR codes.</Text>
+            <Pressable style={styles.button} onPress={requestPermission}>
+              <Text style={styles.buttonText}>Grant Camera Access</Text>
+            </Pressable>
+          </View>
+        ) : (
+          <CameraView
+            style={styles.camera}
+            barcodeScannerSettings={{ barcodeTypes: ['qr'] }}
+            onBarcodeScanned={handleBarcodeScanned}
+          />
+        ))}
+
+      {mode === 'photo' && (
+        <View style={styles.photoContainer}>
+          <Text style={styles.photoTitle}>Scan a business card</Text>
+          <Text style={styles.photoSubtitle}>
+            The camera will detect the card's edges and crop to just the card, like a document
+            scanner.
+          </Text>
+          <Pressable style={styles.scanButton} onPress={handleScanFront} disabled={busy}>
+            {busy ? (
+              <ActivityIndicator color="#fff" />
+            ) : (
+              <Text style={styles.scanButtonText}>Scan Card</Text>
+            )}
+          </Pressable>
+        </View>
+      )}
 
       <View style={styles.modeSwitch}>
         <Pressable
@@ -145,21 +142,6 @@ export default function ScanScreen({ navigation }: Props) {
         </Pressable>
       </View>
 
-      {mode === 'photo' && captureStage === 'back' && (
-        <View style={styles.backStageBanner}>
-          <Text style={styles.backStageText}>Now: back of card</Text>
-          <Pressable onPress={() => frontUri && finishWithPhotos(frontUri)}>
-            <Text style={styles.backStageSkip}>Skip</Text>
-          </Pressable>
-        </View>
-      )}
-
-      {mode === 'photo' && (
-        <Pressable style={styles.shutter} onPress={handleTakePhoto} disabled={busy}>
-          {busy ? <ActivityIndicator color="#fff" /> : <View style={styles.shutterInner} />}
-        </Pressable>
-      )}
-
       {mode === 'qr' && <Text style={styles.hint}>Point the camera at a QR code on the card</Text>}
     </View>
   );
@@ -168,9 +150,33 @@ export default function ScanScreen({ navigation }: Props) {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#000' },
   camera: { flex: 1 },
+  permissionContainer: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   permissionText: { color: '#fff', textAlign: 'center', margin: 24, fontSize: 16 },
   button: { backgroundColor: '#fff', borderRadius: 8, padding: 14, margin: 24, alignItems: 'center' },
   buttonText: { fontWeight: '600' },
+  photoContainer: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 32,
+  },
+  photoTitle: { color: '#fff', fontSize: 22, fontWeight: '700', textAlign: 'center', marginBottom: 12 },
+  photoSubtitle: {
+    color: '#aaa',
+    fontSize: 15,
+    textAlign: 'center',
+    marginBottom: 32,
+    lineHeight: 21,
+  },
+  scanButton: {
+    backgroundColor: '#fff',
+    borderRadius: 14,
+    paddingVertical: 16,
+    paddingHorizontal: 40,
+    minWidth: 200,
+    alignItems: 'center',
+  },
+  scanButtonText: { color: '#111', fontWeight: '700', fontSize: 17 },
   modeSwitch: {
     position: 'absolute',
     top: 60,
@@ -184,19 +190,6 @@ const styles = StyleSheet.create({
   modeButtonActive: { backgroundColor: '#fff' },
   modeText: { color: '#fff', fontWeight: '600' },
   modeTextActive: { color: '#111', fontWeight: '600' },
-  shutter: {
-    position: 'absolute',
-    bottom: 40,
-    alignSelf: 'center',
-    width: 76,
-    height: 76,
-    borderRadius: 38,
-    borderWidth: 4,
-    borderColor: '#fff',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  shutterInner: { width: 58, height: 58, borderRadius: 29, backgroundColor: '#fff' },
   hint: {
     position: 'absolute',
     bottom: 60,
@@ -206,18 +199,4 @@ const styles = StyleSheet.create({
     padding: 10,
     borderRadius: 8,
   },
-  backStageBanner: {
-    position: 'absolute',
-    bottom: 130,
-    alignSelf: 'center',
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 14,
-    backgroundColor: 'rgba(0,0,0,0.6)',
-    paddingVertical: 10,
-    paddingHorizontal: 16,
-    borderRadius: 8,
-  },
-  backStageText: { color: '#fff', fontWeight: '600' },
-  backStageSkip: { color: '#8ecbff', fontWeight: '700' },
 });
