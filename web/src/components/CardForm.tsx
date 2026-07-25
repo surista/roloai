@@ -57,7 +57,8 @@ export default function CardForm({ draft, imageUrl, saveLabel, onSave, extraActi
         notes: notes.trim() || undefined,
         tags: splitToList(tagsText),
       });
-    } catch {
+    } catch (err) {
+      console.error('Card save failed:', err);
       setError('Save failed. Check your connection and try again.');
     } finally {
       setSaving(false);

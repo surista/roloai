@@ -11,7 +11,7 @@ import {
   updateDoc,
 } from 'firebase/firestore';
 import { getDownloadURL, ref, uploadBytes } from 'firebase/storage';
-import type { Card, CardDraft } from '@roloai/shared';
+import { stripUndefined, type Card, type CardDraft } from '@roloai/shared';
 import { db, storage } from './firebase';
 
 const cardsCollection = collection(db, 'cards');
@@ -39,7 +39,7 @@ export async function uploadCardImage(cardId: string, localUri: string): Promise
 
 export async function createCard(draft: CardDraft, localImageUri?: string): Promise<string> {
   const docRef = await addDoc(cardsCollection, {
-    ...draft,
+    ...stripUndefined(draft),
     imageUrl: '',
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
@@ -54,7 +54,7 @@ export async function createCard(draft: CardDraft, localImageUri?: string): Prom
 }
 
 export async function updateCard(id: string, changes: Partial<CardDraft>): Promise<void> {
-  await updateDoc(doc(db, 'cards', id), { ...changes, updatedAt: serverTimestamp() });
+  await updateDoc(doc(db, 'cards', id), { ...stripUndefined(changes), updatedAt: serverTimestamp() });
 }
 
 export async function deleteCard(id: string): Promise<void> {

@@ -9,7 +9,7 @@ import {
   updateDoc,
   collection,
 } from 'firebase/firestore';
-import type { Card, CardDraft } from '@roloai/shared';
+import { stripUndefined, type Card, type CardDraft } from '@roloai/shared';
 import { db } from './firebase';
 
 const cardsCollection = collection(db, 'cards');
@@ -28,7 +28,7 @@ export function subscribeToCards(onChange: (cards: Card[]) => void): () => void 
 }
 
 export async function updateCard(id: string, changes: Partial<CardDraft>): Promise<void> {
-  await updateDoc(doc(db, 'cards', id), { ...changes, updatedAt: serverTimestamp() });
+  await updateDoc(doc(db, 'cards', id), { ...stripUndefined(changes), updatedAt: serverTimestamp() });
 }
 
 export async function deleteCard(id: string): Promise<void> {

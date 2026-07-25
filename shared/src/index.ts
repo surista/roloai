@@ -32,3 +32,12 @@ export interface Card {
 
 /** Shape used while building a Card in the review/edit form, before it has an id or timestamps. */
 export type CardDraft = Omit<Card, 'id' | 'createdAt' | 'updatedAt'>;
+
+/** Firestore rejects any field whose value is `undefined` (as opposed to simply absent) — strip them before a write. */
+export function stripUndefined<T extends Record<string, unknown>>(obj: T): Partial<T> {
+  const result: Partial<T> = {};
+  for (const key in obj) {
+    if (obj[key] !== undefined) result[key] = obj[key];
+  }
+  return result;
+}

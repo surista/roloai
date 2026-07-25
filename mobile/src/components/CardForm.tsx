@@ -66,6 +66,7 @@ export default function CardForm({ draft, imageUri, saveLabel, onSave, extraActi
         tags: splitToList(tagsText),
       });
     } catch (e) {
+      console.error('Card save failed:', e);
       Alert.alert('Save failed', 'Check your connection and try again.');
     } finally {
       setSaving(false);
