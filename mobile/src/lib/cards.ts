@@ -29,15 +29,23 @@ export function subscribeToCards(onChange: (cards: Card[]) => void): () => void 
   });
 }
 
-export async function uploadCardImage(cardId: string, localUri: string): Promise<string> {
+export async function uploadCardImage(
+  cardId: string,
+  localUri: string,
+  side: 'front' | 'back' = 'front'
+): Promise<string> {
   const response = await fetch(localUri);
   const blob = await response.blob();
-  const imageRef = ref(storage, `cards/${cardId}/${Date.now()}.jpg`);
+  const imageRef = ref(storage, `cards/${cardId}/${side}-${Date.now()}.jpg`);
   await uploadBytes(imageRef, blob);
   return getDownloadURL(imageRef);
 }
 
-export async function createCard(draft: CardDraft, localImageUri?: string): Promise<string> {
+export async function createCard(
+  draft: CardDraft,
+  localImageUri?: string,
+  localBackImageUri?: string
+): Promise<string> {
   const docRef = await addDoc(cardsCollection, {
     ...stripUndefined(draft),
     imageUrl: '',
@@ -45,9 +53,15 @@ export async function createCard(draft: CardDraft, localImageUri?: string): Prom
     updatedAt: serverTimestamp(),
   });
 
+  const updates: Partial<Card> = {};
   if (localImageUri) {
-    const imageUrl = await uploadCardImage(docRef.id, localImageUri);
-    await updateDoc(doc(db, 'cards', docRef.id), { imageUrl, updatedAt: serverTimestamp() });
+    updates.imageUrl = await uploadCardImage(docRef.id, localImageUri, 'front');
+  }
+  if (localBackImageUri) {
+    updates.imageBackUrl = await uploadCardImage(docRef.id, localBackImageUri, 'back');
+  }
+  if (Object.keys(updates).length > 0) {
+    await updateDoc(doc(db, 'cards', docRef.id), { ...updates, updatedAt: serverTimestamp() });
   }
 
   return docRef.id;

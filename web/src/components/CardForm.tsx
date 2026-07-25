@@ -17,12 +17,13 @@ function splitToList(value: string): string[] {
 interface Props {
   draft: CardDraft;
   imageUrl?: string;
+  backImageUrl?: string;
   saveLabel: string;
   onSave: (fields: Omit<CardDraft, 'imageUrl' | 'source' | 'rawOcrText'>) => Promise<void>;
   extraAction?: { label: string; onClick: () => void; destructive?: boolean };
 }
 
-export default function CardForm({ draft, imageUrl, saveLabel, onSave, extraAction }: Props) {
+export default function CardForm({ draft, imageUrl, backImageUrl, saveLabel, onSave, extraAction }: Props) {
   const [firstName, setFirstName] = useState(draft.firstName);
   const [lastName, setLastName] = useState(draft.lastName);
   const [jobTitle, setJobTitle] = useState(draft.jobTitle ?? '');
@@ -67,7 +68,18 @@ export default function CardForm({ draft, imageUrl, saveLabel, onSave, extraActi
 
   return (
     <form className="card-form" onSubmit={handleSubmit}>
-      {imageUrl && <img src={imageUrl} alt="" className="card-form-preview" />}
+      {imageUrl && (
+        <div className="card-form-image">
+          <span className="field-label">Front</span>
+          <img src={imageUrl} alt="" className="card-form-preview" />
+        </div>
+      )}
+      {backImageUrl && (
+        <div className="card-form-image">
+          <span className="field-label">Back</span>
+          <img src={backImageUrl} alt="" className="card-form-preview" />
+        </div>
+      )}
 
       <Field label="First name" value={firstName} onChange={setFirstName} />
       <Field label="Last name" value={lastName} onChange={setLastName} />

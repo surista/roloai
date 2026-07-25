@@ -8,12 +8,15 @@ import { parseOcrText, parseQrPayload } from '../lib/parseCard';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Scan'>;
 type Mode = 'photo' | 'qr';
+type CaptureStage = 'front' | 'back';
 
 export default function ScanScreen({ navigation }: Props) {
   const [permission, requestPermission] = useCameraPermissions();
   const [mode, setMode] = useState<Mode>('photo');
   const [busy, setBusy] = useState(false);
   const [qrLocked, setQrLocked] = useState(false);
+  const [captureStage, setCaptureStage] = useState<CaptureStage>('front');
+  const [frontUri, setFrontUri] = useState<string | null>(null);
   const cameraRef = useRef<CameraView>(null);
 
   if (!permission) return <View style={styles.container} />;
@@ -29,19 +32,64 @@ export default function ScanScreen({ navigation }: Props) {
     );
   }
 
-  const handleTakePhoto = async () => {
-    if (!cameraRef.current || busy) return;
+  const resetCapture = () => {
+    setBusy(false);
+    setCaptureStage('front');
+    setFrontUri(null);
+  };
+
+  const finishWithPhotos = async (frontPhotoUri: string, backPhotoUri?: string) => {
     setBusy(true);
     try {
-      const photo = await cameraRef.current.takePictureAsync({ quality: 0.8 });
-      if (!photo) return;
-      const result = await TextRecognition.recognize(photo.uri);
+      const result = await TextRecognition.recognize(frontPhotoUri);
       const draft = parseOcrText(result.text);
-      navigation.navigate('ReviewEdit', { draft, localImageUri: photo.uri });
+      navigation.navigate('ReviewEdit', {
+        draft,
+        localImageUri: frontPhotoUri,
+        localBackImageUri: backPhotoUri,
+      });
     } catch (e) {
       Alert.alert('Scan failed', 'Could not read the card. Try again with better lighting.');
     } finally {
-      setBusy(false);
+      resetCapture();
+    }
+  };
+
+  const handleTakePhoto = async () => {
+    if (!cameraRef.current || busy) return;
+
+    if (captureStage === 'front') {
+      setBusy(true);
+      try {
+        const photo = await cameraRef.current.takePictureAsync({ quality: 0.8 });
+        if (!photo) return;
+        setFrontUri(photo.uri);
+        setBusy(false);
+        setCaptureStage('back');
+        Alert.alert(
+          'Front captured',
+          'Many cards have text on both sides (e.g. English/Japanese) — take a photo of the back too?',
+          [
+            { text: 'Skip', style: 'cancel', onPress: () => finishWithPhotos(photo.uri) },
+            { text: 'Add Back Photo', onPress: () => {} },
+          ]
+        );
+      } catch (e) {
+        Alert.alert('Scan failed', 'Could not read the card. Try again with better lighting.');
+        resetCapture();
+      }
+      return;
+    }
+
+    // captureStage === 'back'
+    setBusy(true);
+    try {
+      const photo = await cameraRef.current.takePictureAsync({ quality: 0.8 });
+      if (!photo || !frontUri) return;
+      await finishWithPhotos(frontUri, photo.uri);
+    } catch (e) {
+      Alert.alert('Scan failed', 'Could not read the back photo. Try again.');
+      resetCapture();
     }
   };
 
@@ -81,6 +129,15 @@ export default function ScanScreen({ navigation }: Props) {
           <Text style={mode === 'qr' ? styles.modeTextActive : styles.modeText}>QR Code</Text>
         </Pressable>
       </View>
+
+      {mode === 'photo' && captureStage === 'back' && (
+        <View style={styles.backStageBanner}>
+          <Text style={styles.backStageText}>Now: back of card</Text>
+          <Pressable onPress={() => frontUri && finishWithPhotos(frontUri)}>
+            <Text style={styles.backStageSkip}>Skip</Text>
+          </Pressable>
+        </View>
+      )}
 
       {mode === 'photo' && (
         <Pressable style={styles.shutter} onPress={handleTakePhoto} disabled={busy}>
@@ -134,4 +191,18 @@ const styles = StyleSheet.create({
     padding: 10,
     borderRadius: 8,
   },
+  backStageBanner: {
+    position: 'absolute',
+    bottom: 130,
+    alignSelf: 'center',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 14,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+  },
+  backStageText: { color: '#fff', fontWeight: '600' },
+  backStageSkip: { color: '#8ecbff', fontWeight: '700' },
 });

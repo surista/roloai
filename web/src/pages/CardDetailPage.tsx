@@ -43,6 +43,7 @@ export default function CardDetailPage() {
       <CardForm
         draft={card}
         imageUrl={card.imageUrl || undefined}
+        backImageUrl={card.imageBackUrl || undefined}
         saveLabel="Save Changes"
         onSave={async (fields) => {
           await updateCard(cardId!, fields);

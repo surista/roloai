@@ -53,6 +53,7 @@ export default function CardDetailScreen({ route, navigation }: Props) {
     <CardForm
       draft={card}
       imageUri={card.imageUrl || undefined}
+      backImageUri={card.imageBackUrl || undefined}
       saveLabel="Save Changes"
       onSave={async (fields) => {
         await updateCard(cardId, fields);

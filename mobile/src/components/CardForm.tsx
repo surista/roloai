@@ -28,12 +28,13 @@ function splitToList(value: string): string[] {
 interface Props {
   draft: CardDraft;
   imageUri?: string;
+  backImageUri?: string;
   saveLabel: string;
   onSave: (fields: Omit<CardDraft, 'imageUrl' | 'source' | 'rawOcrText'>) => Promise<void>;
   extraAction?: { label: string; onPress: () => void; destructive?: boolean };
 }
 
-export default function CardForm({ draft, imageUri, saveLabel, onSave, extraAction }: Props) {
+export default function CardForm({ draft, imageUri, backImageUri, saveLabel, onSave, extraAction }: Props) {
   const [firstName, setFirstName] = useState(draft.firstName);
   const [lastName, setLastName] = useState(draft.lastName);
   const [jobTitle, setJobTitle] = useState(draft.jobTitle ?? '');
@@ -75,7 +76,18 @@ export default function CardForm({ draft, imageUri, saveLabel, onSave, extraActi
 
   return (
     <ScrollView contentContainerStyle={styles.container}>
-      {imageUri && <Image source={{ uri: imageUri }} style={styles.preview} />}
+      {imageUri && (
+        <>
+          <Text style={styles.label}>Front</Text>
+          <Image source={{ uri: imageUri }} style={styles.preview} />
+        </>
+      )}
+      {backImageUri && (
+        <>
+          <Text style={styles.label}>Back</Text>
+          <Image source={{ uri: backImageUri }} style={styles.preview} />
+        </>
+      )}
 
       <Field label="First name" value={firstName} onChangeText={setFirstName} />
       <Field label="Last name" value={lastName} onChangeText={setLastName} />

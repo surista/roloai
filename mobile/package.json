@@ -1,6 +1,6 @@
 {
   "name": "mobile",
-  "version": "1.01.03",
+  "version": "1.01.04",
   "main": "index.ts",
   "dependencies": {
     "@roloai/shared": "*",
