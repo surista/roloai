@@ -1,10 +1,24 @@
 import React, { useRef, useState } from 'react';
 import { View, Text, Pressable, StyleSheet, ActivityIndicator, Alert } from 'react-native';
 import { CameraView, useCameraPermissions, type BarcodeScanningResult } from 'expo-camera';
-import TextRecognition from '@react-native-ml-kit/text-recognition';
+import { ImageManipulator, SaveFormat } from 'expo-image-manipulator';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../navigation/types';
-import { parseOcrText, parseQrPayload } from '../lib/parseCard';
+import { parseQrPayload } from '../lib/parseCard';
+import { extractCard } from '../lib/functions';
+
+async function prepareImageForUpload(uri: string): Promise<string> {
+  const context = ImageManipulator.manipulate(uri);
+  context.resize({ width: 1600, height: null });
+  const rendered = await context.renderAsync();
+  const result = await rendered.saveAsync({
+    format: SaveFormat.JPEG,
+    compress: 0.7,
+    base64: true,
+  });
+  if (!result.base64) throw new Error('Failed to encode image');
+  return result.base64;
+}
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Scan'>;
 type Mode = 'photo' | 'qr';
@@ -41,15 +55,16 @@ export default function ScanScreen({ navigation }: Props) {
   const finishWithPhotos = async (frontPhotoUri: string, backPhotoUri?: string) => {
     setBusy(true);
     try {
-      const result = await TextRecognition.recognize(frontPhotoUri);
-      const draft = parseOcrText(result.text);
+      const frontBase64 = await prepareImageForUpload(frontPhotoUri);
+      const backBase64 = backPhotoUri ? await prepareImageForUpload(backPhotoUri) : undefined;
+      const draft = await extractCard(frontBase64, backBase64);
       navigation.navigate('ReviewEdit', {
         draft,
         localImageUri: frontPhotoUri,
         localBackImageUri: backPhotoUri,
       });
     } catch (e) {
-      Alert.alert('Scan failed', 'Could not read the card. Try again with better lighting.');
+      Alert.alert('Scan failed', 'Could not read the card. Check your connection and try again.');
     } finally {
       resetCapture();
     }

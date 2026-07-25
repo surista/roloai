@@ -18,6 +18,7 @@ firebase-debug.log
 firebase-debug.*.log
 *.env
 .env.local
+functions/lib/
 
 # Firebase service account keys — never commit
 *-firebase-adminsdk-*.json

@@ -1,17 +1,18 @@
 # RoloAI
 
-A personal replacement for CamCard: scan business cards on iPhone (on-device OCR, or QR code when the card has one), review/correct the parsed fields, and store them in Firebase. A companion web app lets you search, view, and edit everything from a browser.
+A personal replacement for CamCard: scan business cards on iPhone (photo or QR code, front and optionally back), have Claude read the card and extract structured contact details, review/correct on device, and store everything in Firebase. A companion web app lets you search, view, and edit everything from a browser.
 
 ## Architecture
 
 ```
 roloai/
-  mobile/   Expo (React Native + TypeScript), iOS only — capture flow
-  web/      Vite + React + TypeScript — view/search/edit
-  shared/   Shared TypeScript Card type, used by both apps
+  mobile/     Expo (React Native + TypeScript), iOS only — capture flow
+  web/        Vite + React + TypeScript — view/search/edit
+  shared/     Shared TypeScript Card type, used by both apps
+  functions/  Firebase Cloud Function — proxies card image(s) to Claude, holds the Anthropic API key server-side
 ```
 
-Both apps talk directly to Firebase (Firestore + Storage + Auth) — no custom backend server.
+Both apps talk directly to Firebase (Firestore + Storage + Auth) — no custom backend server, except the one Cloud Function that has to exist because the Anthropic API key can't live in a client app bundle (it's extractable from any shipped binary).
 
 Firebase project: **roloai-be1891** — [console](https://console.firebase.google.com/project/roloai-be1891/overview)
 
@@ -23,6 +24,19 @@ Done already:
 - Blaze plan active, Cloud Storage bucket provisioned, and `storage.rules` deployed (auth required on `cards/{cardId}/{fileName}`).
 
 Also done: Email/Password sign-in is enabled, and the one user account is created. The backend is fully live.
+
+## Card extraction (Cloud Function)
+
+Scanning a card sends the photo(s) to the `extractCard` callable function (`functions/src/index.ts`), which calls Claude (`claude-sonnet-5`, vision + structured outputs) to read the card and return the parsed fields directly — no on-device OCR or regex guessing. When both a front and back photo are captured (common for bilingual cards, e.g. English/Japanese), both images go in one request so Claude can merge them into a single coherent record instead of parsing each side independently.
+
+The function requires the caller to be signed in (`request.auth`) and reads the Anthropic key from a Firebase Functions secret, never from client code:
+
+```
+firebase functions:secrets:set ANTHROPIC_API_KEY --project roloai-be1891   # run once, prompts for the key (hidden input)
+firebase deploy --only functions --project roloai-be1891                   # after any change to functions/src
+```
+
+`firebase functions:secrets:get ANTHROPIC_API_KEY` confirms a secret is set without printing its value.
 
 ## Environment config
 
@@ -47,7 +61,7 @@ npm run deploy:web
 
 ## Running the mobile app
 
-The OCR library (`@react-native-ml-kit/text-recognition`) is a native module, so **Expo Go won't work** — you need a custom dev client, same as the `journal` project. This account is on the EAS free plan, so builds must always run with `--local`.
+Build with a custom dev client (same pattern as the `journal` project). This account is on the EAS free plan, so builds must always run with `--local`.
 
 First time only, build a dev client and install it on your device/simulator:
 
@@ -89,4 +103,4 @@ npm run version:major   # 1.02.05 -> 2.01.01 (breaking changes)
 
 ## Non-goals (for now)
 
-Multi-user accounts, Android, cloud OCR fallback, and Contacts/CRM export were intentionally left out of this build to keep it focused on replacing CamCard's scan-and-store loop. See the plan history for rationale if any of these come up later.
+Multi-user accounts, Android, offline/on-device OCR fallback, and Contacts/CRM export were intentionally left out of this build to keep it focused on replacing CamCard's scan-and-store loop. See the plan history for rationale if any of these come up later.
