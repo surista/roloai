@@ -11,6 +11,7 @@ import {
   Alert,
 } from 'react-native';
 import type { CardDraft } from '@roloai/shared';
+import ImageViewerModal from './ImageViewerModal';
 
 function joinPhones(phones: { number: string }[]): string {
   return phones.map((p) => p.number).join(', ');
@@ -46,6 +47,12 @@ export default function CardForm({ draft, imageUri, backImageUri, saveLabel, onS
   const [notes, setNotes] = useState(draft.notes ?? '');
   const [tagsText, setTagsText] = useState(draft.tags.join(', '));
   const [saving, setSaving] = useState(false);
+  const [viewerIndex, setViewerIndex] = useState<number | null>(null);
+
+  const viewerImages = [
+    imageUri && { uri: imageUri, label: 'Front' },
+    backImageUri && { uri: backImageUri, label: 'Back' },
+  ].filter((img): img is { uri: string; label: string } => Boolean(img));
 
   const handleSave = async () => {
     if (!firstName.trim() && !lastName.trim()) {
@@ -79,15 +86,26 @@ export default function CardForm({ draft, imageUri, backImageUri, saveLabel, onS
       {imageUri && (
         <>
           <Text style={styles.label}>Front</Text>
-          <Image source={{ uri: imageUri }} style={styles.preview} />
+          <Pressable onPress={() => setViewerIndex(0)}>
+            <Image source={{ uri: imageUri }} style={styles.preview} />
+          </Pressable>
         </>
       )}
       {backImageUri && (
         <>
           <Text style={styles.label}>Back</Text>
-          <Image source={{ uri: backImageUri }} style={styles.preview} />
+          <Pressable onPress={() => setViewerIndex(1)}>
+            <Image source={{ uri: backImageUri }} style={styles.preview} />
+          </Pressable>
         </>
       )}
+
+      <ImageViewerModal
+        visible={viewerIndex !== null}
+        images={viewerImages}
+        initialIndex={viewerIndex ?? 0}
+        onClose={() => setViewerIndex(null)}
+      />
 
       <Field label="First name" value={firstName} onChangeText={setFirstName} />
       <Field label="Last name" value={lastName} onChangeText={setLastName} />

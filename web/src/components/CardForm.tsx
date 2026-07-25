@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from 'react';
 import type { CardDraft } from '@roloai/shared';
+import Lightbox from './Lightbox';
 
 function joinPhones(phones: { number: string }[]): string {
   return phones.map((p) => p.number).join(', ');
@@ -36,6 +37,7 @@ export default function CardForm({ draft, imageUrl, backImageUrl, saveLabel, onS
   const [tagsText, setTagsText] = useState(draft.tags.join(', '));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [lightbox, setLightbox] = useState<{ src: string; alt: string } | null>(null);
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -71,14 +73,28 @@ export default function CardForm({ draft, imageUrl, backImageUrl, saveLabel, onS
       {imageUrl && (
         <div className="card-form-image">
           <span className="field-label">Front</span>
-          <img src={imageUrl} alt="" className="card-form-preview" />
+          <img
+            src={imageUrl}
+            alt=""
+            className="card-form-preview card-form-preview-clickable"
+            onClick={() => setLightbox({ src: imageUrl, alt: 'Front of card' })}
+          />
         </div>
       )}
       {backImageUrl && (
         <div className="card-form-image">
           <span className="field-label">Back</span>
-          <img src={backImageUrl} alt="" className="card-form-preview" />
+          <img
+            src={backImageUrl}
+            alt=""
+            className="card-form-preview card-form-preview-clickable"
+            onClick={() => setLightbox({ src: backImageUrl, alt: 'Back of card' })}
+          />
         </div>
+      )}
+
+      {lightbox && (
+        <Lightbox src={lightbox.src} alt={lightbox.alt} onClose={() => setLightbox(null)} />
       )}
 
       <Field label="First name" value={firstName} onChange={setFirstName} />
