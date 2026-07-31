@@ -20,16 +20,30 @@ Firebase project: **roloai-be1891** — [console](https://console.firebase.googl
 
 Done already:
 - Project `roloai-be1891` created, with a Web app and an iOS app (`com.roloai.mobile`) registered.
-- Firestore database provisioned and `firestore.rules` deployed (auth required on the `cards` collection, everything else denied).
-- Blaze plan active, Cloud Storage bucket provisioned, and `storage.rules` deployed (auth required on `cards/{cardId}/{fileName}`).
+- Firestore database provisioned and `firestore.rules` deployed (owner-only on the `cards` collection, everything else denied).
+- Blaze plan active, Cloud Storage bucket provisioned, and `storage.rules` deployed (owner-only on `cards/{cardId}/{fileName}`).
 
 Also done: Email/Password sign-in is enabled, and the one user account is created. The backend is fully live.
+
+## Access control
+
+This is a single-user app, and "signed in" is not by itself a meaningful gate — the Firebase client API key is public (extractable from the shipped iOS binary and the web bundle), and Firebase Email/Password lets anyone holding it self-register an account. So `firestore.rules`, `storage.rules`, and the `extractCard` function all check the caller's email against the one owner account rather than just `request.auth != null`. Changing the owner account means updating all three.
+
+Belt and braces: also turn off self-registration in the console (Authentication → Settings → User actions → *Enable create*), since the app never needs to create accounts at runtime.
+
+Rules changes only take effect once deployed:
+
+```
+firebase deploy --only firestore:rules,storage --project roloai-be1891
+```
 
 ## Card capture
 
 Tapping "Scan Card" launches Apple's built-in document scanner (VisionKit's `VNDocumentCameraViewController`, via `react-native-document-scanner-plugin`) — the same tech behind the Notes app's "Scan Documents" feature. It detects the card's edges live, lets you adjust corners if needed, and returns an already perspective-corrected, cropped image. No custom edge-detection code to maintain.
 
-VisionKit's scanner auto-captures continuously (it's built for multi-page documents) with no per-shot save/retake confirmation of its own, so `useScanWithReview` (`mobile/src/lib/useScanWithReview.tsx`) adds that missing checkpoint: after the native scanner session ends, it shows what was captured and asks Retake or Use Photo before continuing — Retake reopens the native scanner, Use Photo proceeds. Both the initial scan flow and the retake-on-a-saved-card flow share this hook.
+VisionKit's scanner auto-captures continuously (it's built for multi-page documents) and keeps firing for as long as it can see a card, so one session normally returns several shots of the same card. On iOS there's no way to change that: `maxNumDocuments` is Android-only, and `VNDocumentCameraViewController` exposes no per-capture delegate callback — it reports back only once the user taps **Save**, so nothing can intercept an individual shot.
+
+`useScanWithReview` (`mobile/src/lib/useScanWithReview.tsx`) turns that into a feature instead of an annoyance: after the session ends it shows *every* captured shot as a swipeable strip with Retake / Use This, so the repeated auto-capture becomes a choice of takes and nothing is saved without confirmation. (Before, only the first shot was kept and the rest were silently discarded.) Retake reopens the native scanner and replaces the batch. Both the initial scan flow and the retake-on-a-saved-card flow share this hook.
 
 On an already-saved card, the "Retake" / "Add Photo" controls next to Front/Back in the mobile app relaunch the same scanner for just that side — it replaces the image in Storage/Firestore (deleting the old file) without touching the text fields, since a photo retake shouldn't silently overwrite edits you've already made to the extracted details.
 
