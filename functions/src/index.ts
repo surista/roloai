@@ -6,6 +6,13 @@ import { z } from 'zod';
 
 const anthropicApiKey = defineSecret('ANTHROPIC_API_KEY');
 
+/**
+ * Single-user app — mirrors the owner check in firestore.rules / storage.rules. Without it,
+ * anyone who self-registers with the public client API key could spend this project's
+ * Anthropic budget.
+ */
+const OWNER_EMAIL = 'surista@gmail.com';
+
 const CardExtractionSchema = z.object({
   firstName: z.string(),
   lastName: z.string(),
@@ -26,10 +33,15 @@ interface ExtractCardRequest {
 }
 
 export const extractCard = onCall<ExtractCardRequest>(
-  { secrets: [anthropicApiKey], region: 'us-central1', timeoutSeconds: 30 },
+  // A two-image vision call can take a while; 30s was tight enough to surface as a spurious
+  // "check your connection" on the client.
+  { secrets: [anthropicApiKey], region: 'us-central1', timeoutSeconds: 60 },
   async (request) => {
     if (!request.auth) {
       throw new HttpsError('unauthenticated', 'Sign in required.');
+    }
+    if (request.auth.token.email !== OWNER_EMAIL) {
+      throw new HttpsError('permission-denied', 'Not authorized.');
     }
 
     const { frontImageBase64, backImageBase64 } = request.data;

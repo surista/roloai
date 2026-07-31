@@ -2,8 +2,15 @@ rules_version = '2';
 
 service cloud.firestore {
   match /databases/{database}/documents {
+    // Single-user app. `request.auth != null` alone is not a meaningful gate: the client API
+    // key is public and extractable from the shipped app, and Firebase Email/Password lets
+    // anyone holding it self-register an account. Pin to the one account that owns the data.
+    function isOwner() {
+      return request.auth != null && request.auth.token.email == 'surista@gmail.com';
+    }
+
     match /cards/{cardId} {
-      allow read, write: if request.auth != null;
+      allow read, write: if isOwner();
     }
     match /{document=**} {
       allow read, write: if false;

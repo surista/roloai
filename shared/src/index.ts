@@ -41,3 +41,21 @@ export function stripUndefined<T extends Record<string, unknown>>(obj: T): Parti
   }
   return result;
 }
+
+/**
+ * Firestore Timestamps are recognised structurally (by their `toMillis()`) rather than with
+ * `instanceof`, so this package can stay dependency-free and be shared by both apps.
+ */
+function toMillis(value: unknown): number | undefined {
+  if (value && typeof (value as { toMillis?: unknown }).toMillis === 'function') {
+    return (value as { toMillis: () => number }).toMillis();
+  }
+  return typeof value === 'number' ? value : undefined;
+}
+
+/** Converts a Firestore document into a Card, normalising its server timestamps to millis. */
+export function cardFromFirestore(id: string, data: Record<string, unknown>): Card {
+  const createdAt = toMillis(data.createdAt) ?? Date.now();
+  const updatedAt = toMillis(data.updatedAt) ?? createdAt;
+  return { ...data, id, createdAt, updatedAt } as Card;
+}

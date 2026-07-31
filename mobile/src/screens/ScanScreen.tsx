@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
+import React, { useCallback, useState } from 'react';
 import { View, Text, Pressable, StyleSheet, ActivityIndicator, Alert } from 'react-native';
 import { CameraView, useCameraPermissions, type BarcodeScanningResult } from 'expo-camera';
+import { useFocusEffect } from '@react-navigation/native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../navigation/types';
 import { parseQrPayload } from '../lib/parseCard';
@@ -18,6 +19,10 @@ export default function ScanScreen({ navigation }: Props) {
   const [qrLocked, setQrLocked] = useState(false);
   const { scan, reviewModal } = useScanWithReview();
 
+  // Backing out of ReviewEdit returns to a still-mounted Scan screen with the lock set, which
+  // would leave the QR camera silently ignoring every code — clear it whenever we regain focus.
+  useFocusEffect(useCallback(() => setQrLocked(false), []));
+
   const finishWithPhotos = async (frontPhotoUri: string, backPhotoUri?: string) => {
     setBusy(true);
     try {
@@ -30,6 +35,7 @@ export default function ScanScreen({ navigation }: Props) {
         localBackImageUri: backPhotoUri,
       });
     } catch (e) {
+      console.error('Card extraction failed:', e);
       Alert.alert('Scan failed', 'Could not read the card. Check your connection and try again.');
     } finally {
       setBusy(false);

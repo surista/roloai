@@ -1,8 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { View, ActivityIndicator, Alert } from 'react-native';
-import { doc, onSnapshot, Timestamp } from 'firebase/firestore';
+import { doc, onSnapshot } from 'firebase/firestore';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
-import type { Card } from '@roloai/shared';
+import { cardFromFirestore, type Card } from '@roloai/shared';
 import type { RootStackParamList } from '../navigation/types';
 import { db } from '../lib/firebase';
 import { deleteCard, updateCard, updateCardImage } from '../lib/cards';
@@ -20,10 +20,7 @@ export default function CardDetailScreen({ route, navigation }: Props) {
         setCard(null);
         return;
       }
-      const data = snap.data();
-      const createdAt = data.createdAt instanceof Timestamp ? data.createdAt.toMillis() : Date.now();
-      const updatedAt = data.updatedAt instanceof Timestamp ? data.updatedAt.toMillis() : createdAt;
-      setCard({ id: snap.id, ...data, createdAt, updatedAt } as Card);
+      setCard(cardFromFirestore(snap.id, snap.data()));
     });
   }, [cardId]);
 
@@ -42,7 +39,7 @@ export default function CardDetailScreen({ route, navigation }: Props) {
         text: 'Delete',
         style: 'destructive',
         onPress: async () => {
-          await deleteCard(cardId);
+          await deleteCard(cardId, [card.imageUrl, card.imageBackUrl]);
           navigation.popToTop();
         },
       },

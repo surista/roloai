@@ -2,30 +2,46 @@ import {
   addDoc,
   collection,
   deleteDoc,
+  deleteField,
   doc,
   onSnapshot,
   orderBy,
   query,
   serverTimestamp,
-  Timestamp,
   updateDoc,
 } from 'firebase/firestore';
 import { deleteObject, getDownloadURL, ref, uploadBytes } from 'firebase/storage';
-import { stripUndefined, type Card, type CardDraft } from '@roloai/shared';
+import { cardFromFirestore, stripUndefined, type Card, type CardDraft } from '@roloai/shared';
 import { db, storage } from './firebase';
 
 const cardsCollection = collection(db, 'cards');
 
-function fromFirestore(id: string, data: Record<string, unknown>): Card {
-  const createdAt = data.createdAt instanceof Timestamp ? data.createdAt.toMillis() : Date.now();
-  const updatedAt = data.updatedAt instanceof Timestamp ? data.updatedAt.toMillis() : createdAt;
-  return { id, ...data, createdAt, updatedAt } as Card;
+/**
+ * A field the user cleared arrives as `undefined`. A create has to strip those (Firestore
+ * rejects undefined values), but an update has to turn them into deleteField() instead —
+ * stripping them would leave the previous value in place and silently undo the edit.
+ */
+function toUpdatePayload(changes: Partial<CardDraft>): Record<string, unknown> {
+  const payload: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(changes)) {
+    payload[key] = value === undefined ? deleteField() : value;
+  }
+  return payload;
+}
+
+/** Best-effort removal of a Storage file by its download URL — never worth failing the caller over. */
+async function deleteImageByUrl(url: string): Promise<void> {
+  try {
+    await deleteObject(ref(storage, url));
+  } catch (e) {
+    console.warn('Could not delete card image:', e);
+  }
 }
 
 export function subscribeToCards(onChange: (cards: Card[]) => void): () => void {
   const q = query(cardsCollection, orderBy('createdAt', 'desc'));
   return onSnapshot(q, (snapshot) => {
-    onChange(snapshot.docs.map((d) => fromFirestore(d.id, d.data())));
+    onChange(snapshot.docs.map((d) => cardFromFirestore(d.id, d.data())));
   });
 }
 
@@ -68,7 +84,10 @@ export async function createCard(
 }
 
 export async function updateCard(id: string, changes: Partial<CardDraft>): Promise<void> {
-  await updateDoc(doc(db, 'cards', id), { ...stripUndefined(changes), updatedAt: serverTimestamp() });
+  await updateDoc(doc(db, 'cards', id), {
+    ...toUpdatePayload(changes),
+    updatedAt: serverTimestamp(),
+  });
 }
 
 export async function updateCardImage(
@@ -84,17 +103,20 @@ export async function updateCardImage(
   });
 
   if (previousUrl) {
-    // Best-effort cleanup of the replaced file — not worth failing the retake over.
-    try {
-      await deleteObject(ref(storage, previousUrl));
-    } catch (e) {
-      console.warn('Could not delete previous card image:', e);
-    }
+    await deleteImageByUrl(previousUrl);
   }
 
   return url;
 }
 
-export async function deleteCard(id: string): Promise<void> {
+/**
+ * Storage has no cascade delete, so the card's photos have to go explicitly or they stay in
+ * the bucket forever. A retake already cleans up the file it replaced, so the URLs still on
+ * the card are the only ones left to remove.
+ */
+export async function deleteCard(id: string, imageUrls: (string | undefined)[] = []): Promise<void> {
+  await Promise.all(
+    imageUrls.filter((url): url is string => Boolean(url)).map(deleteImageByUrl)
+  );
   await deleteDoc(doc(db, 'cards', id));
 }

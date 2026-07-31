@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { doc, onSnapshot, Timestamp } from 'firebase/firestore';
-import type { Card } from '@roloai/shared';
+import { doc, onSnapshot } from 'firebase/firestore';
+import { cardFromFirestore, type Card } from '@roloai/shared';
 import { db } from '../lib/firebase';
 import { deleteCard, updateCard } from '../lib/cards';
 import CardForm from '../components/CardForm';
@@ -18,10 +18,7 @@ export default function CardDetailPage() {
         setCard(null);
         return;
       }
-      const data = snap.data();
-      const createdAt = data.createdAt instanceof Timestamp ? data.createdAt.toMillis() : Date.now();
-      const updatedAt = data.updatedAt instanceof Timestamp ? data.updatedAt.toMillis() : createdAt;
-      setCard({ id: snap.id, ...data, createdAt, updatedAt } as Card);
+      setCard(cardFromFirestore(snap.id, snap.data()));
     });
   }, [cardId]);
 
@@ -31,7 +28,7 @@ export default function CardDetailPage() {
   const handleDelete = async () => {
     if (!cardId) return;
     if (!confirm(`Delete ${card.firstName} ${card.lastName}?`)) return;
-    await deleteCard(cardId);
+    await deleteCard(cardId, [card.imageUrl, card.imageBackUrl]);
     navigate('/');
   };
 
