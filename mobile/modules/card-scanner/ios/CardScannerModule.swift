@@ -46,7 +46,7 @@ public class CardScannerModule: Module {
   }
 }
 
-internal final class CardScannerNoViewControllerException: Exception {
+internal final class CardScannerNoViewControllerException: Exception, @unchecked Sendable {
   override var reason: String {
     "Could not find a view controller to present the card scanner from"
   }

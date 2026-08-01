@@ -188,7 +188,7 @@ extension CardScannerViewController: AVCaptureVideoDataOutputSampleBufferDelegat
     let handler = VNImageRequestHandler(cvPixelBuffer: buffer, orientation: .right, options: [:])
     try? handler.perform([request])
 
-    guard let quad = (request.results as? [VNRectangleObservation])?.first,
+    guard let quad = request.results?.first,
           quad.confidence >= minimumConfidence,
           Self.area(of: quad) >= minimumQuadArea else {
       stableCount = 0
@@ -288,7 +288,7 @@ extension CardScannerViewController: AVCapturePhotoCaptureDelegate {
     let handler = VNImageRequestHandler(ciImage: oriented, options: [:])
     try? handler.perform([request])
 
-    guard let quad = (request.results as? [VNRectangleObservation])?.first else {
+    guard let quad = request.results?.first else {
       // Detection can miss on the still even when it held on video. An uncropped card still
       // extracts fine, so return the full frame rather than throwing the capture away.
       return oriented
