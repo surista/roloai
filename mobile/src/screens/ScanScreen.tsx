@@ -62,7 +62,10 @@ export default function ScanScreen({ navigation }: Props) {
   const handleScanBack = async () => {
     if (!frontUri || busy) return;
     const backUri = await scan('Back of card');
-    await finishWithPhotos(frontUri, backUri ?? undefined);
+    // Cancelling the back scan returns to the choice step rather than silently committing to
+    // a front-only card — "Skip" is there for that, and is the deliberate way to say it.
+    if (!backUri) return;
+    await finishWithPhotos(frontUri, backUri);
   };
 
   const handleSkipBack = async () => {

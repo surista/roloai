@@ -124,11 +124,14 @@ export function useScanWithReview() {
         )}
 
         <View style={styles.buttonRow}>
+          <Pressable style={styles.cancelButton} onPress={() => finish(null)}>
+            <Text style={styles.cancelButtonText}>Cancel</Text>
+          </Pressable>
           <Pressable style={styles.retakeButton} onPress={handleRetake}>
             <Text style={styles.retakeButtonText}>Retake</Text>
           </Pressable>
-          <Pressable style={styles.useButton} onPress={() => finish(pendingUris[selectedIndex])}>
-            <Text style={styles.useButtonText}>{multiple ? 'Use This' : 'Use Photo'}</Text>
+          <Pressable style={styles.acceptButton} onPress={() => finish(pendingUris[selectedIndex])}>
+            <Text style={styles.acceptButtonText}>Accept</Text>
           </Pressable>
         </View>
       </View>
@@ -153,15 +156,30 @@ const styles = StyleSheet.create({
   dots: { flexDirection: 'row', gap: 8, marginTop: 12 },
   dot: { width: 8, height: 8, borderRadius: 4, backgroundColor: 'rgba(255,255,255,0.4)' },
   dotActive: { backgroundColor: '#fff' },
-  buttonRow: { flexDirection: 'row', gap: 16, marginTop: 28 },
+  buttonRow: {
+    flexDirection: 'row',
+    gap: 12,
+    marginTop: 28,
+    paddingHorizontal: 20,
+    alignSelf: 'stretch',
+  },
+  cancelButton: { flex: 1, paddingVertical: 14, borderRadius: 12, alignItems: 'center' },
+  cancelButtonText: { color: '#aaa', fontWeight: '600', fontSize: 16 },
   retakeButton: {
+    flex: 1,
     paddingVertical: 14,
-    paddingHorizontal: 28,
     borderRadius: 12,
+    alignItems: 'center',
     borderWidth: 1,
     borderColor: '#fff',
   },
   retakeButtonText: { color: '#fff', fontWeight: '600', fontSize: 16 },
-  useButton: { backgroundColor: '#fff', paddingVertical: 14, paddingHorizontal: 28, borderRadius: 12 },
-  useButtonText: { color: '#111', fontWeight: '700', fontSize: 16 },
+  acceptButton: {
+    flex: 1,
+    backgroundColor: '#fff',
+    paddingVertical: 14,
+    borderRadius: 12,
+    alignItems: 'center',
+  },
+  acceptButtonText: { color: '#111', fontWeight: '700', fontSize: 16 },
 });
