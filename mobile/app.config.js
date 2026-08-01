@@ -29,7 +29,7 @@ module.exports = {
     web: {
       favicon: './assets/favicon.png',
     },
-    plugins: ['expo-camera', 'react-native-document-scanner-plugin'],
+    plugins: ['expo-camera'],
     extra: {
       eas: {
         projectId: 'bda18c22-85c2-4d1b-b89e-066d31810f77',

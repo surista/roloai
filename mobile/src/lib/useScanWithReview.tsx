@@ -1,48 +1,24 @@
 import React, { useCallback, useRef, useState } from 'react';
-import {
-  Modal,
-  View,
-  Image,
-  Text,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  useWindowDimensions,
-  type NativeSyntheticEvent,
-  type NativeScrollEvent,
-} from 'react-native';
+import { Modal, View, Image, Text, Pressable, StyleSheet } from 'react-native';
 import { scanCardEdge } from './documentScanner';
 
 /**
- * Wraps scanCardEdge() with an explicit "Use This / Retake" checkpoint.
+ * Wraps scanCardEdge() with a confirmation step: the scanner auto-captures a single shot and
+ * stops, and this puts that shot in front of the user and does nothing until they choose
+ * Accept, Retake or Cancel.
  *
- * VisionKit auto-captures continuously and can't be stopped after one shot (see
- * scanCardEdge), so a session typically returns several shots of the same card. Rather than
- * silently keeping the first, all of them are shown here as a swipeable strip: the repeated
- * auto-capture becomes a choice of takes, and nothing reaches the card without confirmation.
+ * The scanner resolves only once it has fully dismissed, so showing this modal doesn't race the
+ * dismissal — a UIKit presentation made against a controller mid-dismissal is dropped by iOS.
  */
 export function useScanWithReview() {
-  const [pendingUris, setPendingUris] = useState<string[]>([]);
-  const [selectedIndex, setSelectedIndex] = useState(0);
+  const [pendingUri, setPendingUri] = useState<string | null>(null);
   const [label, setLabel] = useState<string | undefined>(undefined);
-  // Remounts the pager on each new batch so it starts at the first shot instead of
-  // holding the scroll offset from the previous one.
-  const [batchId, setBatchId] = useState(0);
   const resolverRef = useRef<((uri: string | null) => void) | null>(null);
-  const { width, height } = useWindowDimensions();
-  const pageHeight = height * 0.6;
-
-  const showBatch = (uris: string[]) => {
-    setPendingUris(uris);
-    setSelectedIndex(0);
-    setBatchId((id) => id + 1);
-  };
 
   const finish = (uri: string | null) => {
     resolverRef.current?.(uri);
     resolverRef.current = null;
-    setPendingUris([]);
-    setSelectedIndex(0);
+    setPendingUri(null);
     setLabel(undefined);
   };
 
@@ -54,75 +30,38 @@ export function useScanWithReview() {
       // hanging whichever caller is awaiting it — treat a failure the same as a cancel.
       scanCardEdge()
         .catch((e) => {
-          console.error('Document scanner failed:', e);
-          return [];
+          console.error('Card scanner failed:', e);
+          return null;
         })
-        .then((uris) => {
-          if (!uris.length) {
+        .then((uri) => {
+          if (!uri) {
             resolverRef.current = null;
             setLabel(undefined);
             resolve(null);
             return;
           }
-          showBatch(uris);
+          setPendingUri(uri);
         });
     });
   }, []);
 
   const handleRetake = async () => {
     try {
-      const uris = await scanCardEdge();
-      if (uris.length) {
-        showBatch(uris);
+      const uri = await scanCardEdge();
+      if (uri) {
+        setPendingUri(uri);
       }
-      // If cancelled, stay in review with the existing shots rather than losing them.
+      // If cancelled, stay in review with the existing photo rather than losing it.
     } catch (e) {
-      console.error('Document scanner failed:', e);
+      console.error('Card scanner failed:', e);
     }
   };
 
-  const handleScroll = (e: NativeSyntheticEvent<NativeScrollEvent>) => {
-    setSelectedIndex(Math.round(e.nativeEvent.contentOffset.x / width));
-  };
-
-  const multiple = pendingUris.length > 1;
-
-  const reviewModal = pendingUris.length ? (
+  const reviewModal = pendingUri ? (
     <Modal visible transparent animationType="fade">
       <View style={styles.backdrop}>
         {label && <Text style={styles.label}>{label}</Text>}
-        {multiple && (
-          <Text style={styles.counter}>
-            {selectedIndex + 1} of {pendingUris.length}
-          </Text>
-        )}
-
-        <ScrollView
-          key={batchId}
-          horizontal
-          pagingEnabled
-          showsHorizontalScrollIndicator={false}
-          onMomentumScrollEnd={handleScroll}
-          style={{ flexGrow: 0, height: pageHeight }}
-        >
-          {pendingUris.map((uri) => (
-            <View key={uri} style={{ width, height: pageHeight, paddingHorizontal: 20 }}>
-              <Image source={{ uri }} style={styles.preview} resizeMode="contain" />
-            </View>
-          ))}
-        </ScrollView>
-
-        {multiple && (
-          <>
-            <Text style={styles.hint}>Swipe to compare shots</Text>
-            <View style={styles.dots}>
-              {pendingUris.map((uri, i) => (
-                <View key={uri} style={[styles.dot, i === selectedIndex && styles.dotActive]} />
-              ))}
-            </View>
-          </>
-        )}
-
+        <Image source={{ uri: pendingUri }} style={styles.preview} resizeMode="contain" />
         <View style={styles.buttonRow}>
           <Pressable style={styles.cancelButton} onPress={() => finish(null)}>
             <Text style={styles.cancelButtonText}>Cancel</Text>
@@ -130,7 +69,7 @@ export function useScanWithReview() {
           <Pressable style={styles.retakeButton} onPress={handleRetake}>
             <Text style={styles.retakeButtonText}>Retake</Text>
           </Pressable>
-          <Pressable style={styles.acceptButton} onPress={() => finish(pendingUris[selectedIndex])}>
+          <Pressable style={styles.acceptButton} onPress={() => finish(pendingUri)}>
             <Text style={styles.acceptButtonText}>Accept</Text>
           </Pressable>
         </View>
@@ -149,13 +88,8 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     paddingVertical: 20,
   },
-  label: { color: '#fff', fontSize: 16, fontWeight: '600', marginBottom: 8 },
-  counter: { color: '#aaa', fontSize: 14, marginBottom: 8 },
-  preview: { flex: 1, width: '100%', borderRadius: 10, backgroundColor: '#111' },
-  hint: { color: '#aaa', fontSize: 13, marginTop: 16 },
-  dots: { flexDirection: 'row', gap: 8, marginTop: 12 },
-  dot: { width: 8, height: 8, borderRadius: 4, backgroundColor: 'rgba(255,255,255,0.4)' },
-  dotActive: { backgroundColor: '#fff' },
+  label: { color: '#fff', fontSize: 16, fontWeight: '600', marginBottom: 16 },
+  preview: { width: '100%', height: '65%', borderRadius: 10, backgroundColor: '#111' },
   buttonRow: {
     flexDirection: 'row',
     gap: 12,
