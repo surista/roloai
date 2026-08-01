@@ -1,5 +1,5 @@
 import React, { useCallback, useState } from 'react';
-import { View, Text, Pressable, StyleSheet, ActivityIndicator, Alert } from 'react-native';
+import { View, Text, Image, Pressable, StyleSheet, ActivityIndicator, Alert } from 'react-native';
 import { CameraView, useCameraPermissions, type BarcodeScanningResult } from 'expo-camera';
 import { useFocusEffect } from '@react-navigation/native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
@@ -17,11 +17,18 @@ export default function ScanScreen({ navigation }: Props) {
   const [mode, setMode] = useState<Mode>('photo');
   const [busy, setBusy] = useState(false);
   const [qrLocked, setQrLocked] = useState(false);
+  const [frontUri, setFrontUri] = useState<string | null>(null);
   const { scan, reviewModal } = useScanWithReview();
 
-  // Backing out of ReviewEdit returns to a still-mounted Scan screen with the lock set, which
-  // would leave the QR camera silently ignoring every code — clear it whenever we regain focus.
-  useFocusEffect(useCallback(() => setQrLocked(false), []));
+  // Backing out of ReviewEdit returns to a still-mounted Scan screen holding the previous
+  // attempt's state — a set QR lock would leave the camera silently ignoring every code, and a
+  // leftover front photo would strand us on the back-of-card step. Reset both on focus.
+  useFocusEffect(
+    useCallback(() => {
+      setQrLocked(false);
+      setFrontUri(null);
+    }, [])
+  );
 
   const finishWithPhotos = async (frontPhotoUri: string, backPhotoUri?: string) => {
     setBusy(true);
@@ -42,24 +49,25 @@ export default function ScanScreen({ navigation }: Props) {
     }
   };
 
-  const handleScanBack = async (frontUri: string) => {
+  // The front/back choice is a step in this screen rather than an Alert: the review modal is
+  // still animating out when scan() resolves, and iOS drops an alert presented against a
+  // modal mid-dismissal, so the prompt never reliably appeared.
+  const handleScanFront = async () => {
+    if (busy) return;
+    const uri = await scan('Front of card');
+    if (!uri) return;
+    setFrontUri(uri);
+  };
+
+  const handleScanBack = async () => {
+    if (!frontUri || busy) return;
     const backUri = await scan('Back of card');
     await finishWithPhotos(frontUri, backUri ?? undefined);
   };
 
-  const handleScanFront = async () => {
-    if (busy) return;
-    const frontUri = await scan('Front of card');
-    if (!frontUri) return;
-
-    Alert.alert(
-      'Front captured',
-      'Many cards have text on both sides (e.g. English/Japanese) — scan the back too?',
-      [
-        { text: 'Skip', style: 'cancel', onPress: () => finishWithPhotos(frontUri) },
-        { text: 'Scan Back', onPress: () => handleScanBack(frontUri) },
-      ]
-    );
+  const handleSkipBack = async () => {
+    if (!frontUri || busy) return;
+    await finishWithPhotos(frontUri);
   };
 
   const handleBarcodeScanned = (result: BarcodeScanningResult) => {
@@ -87,24 +95,46 @@ export default function ScanScreen({ navigation }: Props) {
           />
         ))}
 
-      {mode === 'photo' && (
-        <View style={styles.photoContainer}>
-          <Text style={styles.photoTitle}>Scan a business card</Text>
-          <Text style={styles.photoSubtitle}>
-            The camera will detect the card's edges and crop to just the card, like a document
-            scanner.
-          </Text>
-          <Pressable style={styles.scanButton} onPress={handleScanFront} disabled={busy}>
+      {mode === 'photo' &&
+        (frontUri ? (
+          <View style={styles.photoContainer}>
+            <Text style={styles.photoTitle}>Front captured</Text>
+            <Image source={{ uri: frontUri }} style={styles.frontPreview} resizeMode="contain" />
+            <Text style={styles.photoSubtitle}>
+              Many cards have text on both sides (e.g. English/Japanese). Scan the back too?
+            </Text>
             {busy ? (
               <ActivityIndicator color="#fff" />
             ) : (
-              <Text style={styles.scanButtonText}>Scan Card</Text>
+              <>
+                <Pressable style={styles.scanButton} onPress={handleScanBack}>
+                  <Text style={styles.scanButtonText}>Scan Back</Text>
+                </Pressable>
+                <Pressable style={styles.secondaryButton} onPress={handleSkipBack}>
+                  <Text style={styles.secondaryButtonText}>Skip — front only</Text>
+                </Pressable>
+              </>
             )}
-          </Pressable>
-        </View>
-      )}
+          </View>
+        ) : (
+          <View style={styles.photoContainer}>
+            <Text style={styles.photoTitle}>Scan a business card</Text>
+            <Text style={styles.photoSubtitle}>
+              The camera will detect the card's edges and crop to just the card, like a document
+              scanner.
+            </Text>
+            <Pressable style={styles.scanButton} onPress={handleScanFront} disabled={busy}>
+              {busy ? (
+                <ActivityIndicator color="#fff" />
+              ) : (
+                <Text style={styles.scanButtonText}>Scan Card</Text>
+              )}
+            </Pressable>
+          </View>
+        ))}
 
-      <View style={styles.modeSwitch}>
+      {/* Hidden mid-capture: switching to QR would silently discard the front photo. */}
+      <View style={[styles.modeSwitch, frontUri && styles.hidden]}>
         <Pressable
           style={[styles.modeButton, mode === 'photo' && styles.modeButtonActive]}
           onPress={() => {
@@ -162,6 +192,16 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   scanButtonText: { color: '#111', fontWeight: '700', fontSize: 17 },
+  frontPreview: {
+    width: '100%',
+    height: 200,
+    borderRadius: 10,
+    backgroundColor: '#111',
+    marginBottom: 20,
+  },
+  secondaryButton: { paddingVertical: 14, paddingHorizontal: 24, marginTop: 4 },
+  secondaryButtonText: { color: '#aaa', fontWeight: '600', fontSize: 15 },
+  hidden: { display: 'none' },
   modeSwitch: {
     position: 'absolute',
     top: 60,
