@@ -1,5 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { View, Text, TextInput, FlatList, Pressable, Image, StyleSheet } from 'react-native';
+import { View, Text, TextInput, FlatList, Image, StyleSheet } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import Button from '../components/Button';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { Card } from '@roloai/shared';
 import type { RootStackParamList } from '../navigation/types';
@@ -10,6 +12,7 @@ type Props = NativeStackScreenProps<RootStackParamList, 'CardList'>;
 
 export default function CardListScreen({ navigation }: Props) {
   const { logout } = useAuth();
+  const insets = useSafeAreaInsets();
   const [cards, setCards] = useState<Card[]>([]);
   const [search, setSearch] = useState('');
 
@@ -34,23 +37,29 @@ export default function CardListScreen({ navigation }: Props) {
           value={search}
           onChangeText={setSearch}
         />
-        <Pressable onPress={logout}>
+        <Button onPress={logout} accessibilityLabel="Sign out">
           <Text style={styles.logout}>Sign out</Text>
-        </Pressable>
+        </Button>
       </View>
 
       <FlatList
         data={filtered}
         keyExtractor={(item) => item.id}
-        contentContainerStyle={styles.list}
+        contentContainerStyle={[styles.list, { paddingBottom: insets.bottom + 100 }]}
+        keyboardDismissMode="on-drag"
         ListEmptyComponent={<Text style={styles.empty}>No cards yet — tap Scan to add one.</Text>}
         renderItem={({ item }) => (
-          <Pressable
+          <Button
             style={styles.row}
+            pressedStyle={styles.rowPressed}
+            hitSlop={undefined}
             onPress={() => navigation.navigate('CardDetail', { cardId: item.id })}
+            accessibilityLabel={`${item.firstName} ${item.lastName}`.trim() || 'Card'}
           >
-            {item.imageUrl ? (
-              <Image source={{ uri: item.imageUrl }} style={styles.thumb} />
+            {/* thumbUrl is absent on cards saved before thumbnails existed, so fall back to the
+                full image rather than showing a blank tile for them. */}
+            {item.thumbUrl || item.imageUrl ? (
+              <Image source={{ uri: item.thumbUrl || item.imageUrl }} style={styles.thumb} />
             ) : (
               <View style={[styles.thumb, styles.thumbPlaceholder]} />
             )}
@@ -62,13 +71,18 @@ export default function CardListScreen({ navigation }: Props) {
                 {[item.jobTitle, item.company].filter(Boolean).join(' · ')}
               </Text>
             </View>
-          </Pressable>
+          </Button>
         )}
       />
 
-      <Pressable style={styles.scanButton} onPress={() => navigation.navigate('Scan')}>
+      <Button
+        // A flat 24pt put this inside the home-indicator swipe zone on every notched iPhone,
+        // where the system gesture wins over the button.
+        style={[styles.scanButton, { bottom: insets.bottom + 16 }]}
+        onPress={() => navigation.navigate('Scan')}
+      >
         <Text style={styles.scanButtonText}>+ Scan Card</Text>
-      </Pressable>
+      </Button>
     </View>
   );
 }
@@ -89,7 +103,7 @@ const styles = StyleSheet.create({
     padding: 10,
   },
   logout: { color: '#c00' },
-  list: { paddingHorizontal: 16, paddingBottom: 100 },
+  list: { paddingHorizontal: 16 },
   empty: { textAlign: 'center', color: '#888', marginTop: 40 },
   row: {
     flexDirection: 'row',
@@ -99,6 +113,8 @@ const styles = StyleSheet.create({
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: '#ddd',
   },
+  // A list row dims poorly; a grey wash reads better and matches the platform table style.
+  rowPressed: { backgroundColor: '#e8e8e8' },
   thumb: { width: 48, height: 48, borderRadius: 6, backgroundColor: '#eee' },
   thumbPlaceholder: { alignItems: 'center', justifyContent: 'center' },
   rowText: { flex: 1 },
@@ -106,7 +122,6 @@ const styles = StyleSheet.create({
   subtitle: { color: '#666', marginTop: 2 },
   scanButton: {
     position: 'absolute',
-    bottom: 24,
     left: 24,
     right: 24,
     backgroundColor: '#111',

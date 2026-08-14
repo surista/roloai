@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { doc, onSnapshot } from 'firebase/firestore';
-import { cardFromFirestore, type Card } from '@roloai/shared';
+import { cardFromFirestore, cardImageUrls, type Card } from '@roloai/shared';
 import { db } from '../lib/firebase';
 import { deleteCard, updateCard } from '../lib/cards';
 import CardForm from '../components/CardForm';
@@ -28,7 +28,7 @@ export default function CardDetailPage() {
   const handleDelete = async () => {
     if (!cardId) return;
     if (!confirm(`Delete ${card.firstName} ${card.lastName}?`)) return;
-    await deleteCard(cardId, [card.imageUrl, card.imageBackUrl]);
+    await deleteCard(cardId, cardImageUrls(card));
     navigate('/');
   };
 

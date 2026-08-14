@@ -25,8 +25,12 @@ export default function LoginPage() {
     <div className="login-page">
       <form className="login-form" onSubmit={handleSubmit}>
         <h1>RoloAI</h1>
+        {/* name + autoComplete are what let the browser and password managers offer to fill
+            and save these — without them the one screen with any friction has none of it. */}
         <input
           type="email"
+          name="email"
+          autoComplete="username"
           placeholder="Email"
           autoCapitalize="off"
           value={email}
@@ -34,6 +38,8 @@ export default function LoginPage() {
         />
         <input
           type="password"
+          name="password"
+          autoComplete="current-password"
           placeholder="Password"
           value={password}
           onChange={(e) => setPassword(e.target.value)}

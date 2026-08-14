@@ -11,11 +11,19 @@ import Vision
  perspective crop) but stops after one capture and hands the cropped image straight back, so the
  caller can show it and wait for the user.
  */
+/// Why the scanner finished. The caller needs to tell these apart: a cancel is the user's
+/// choice and should be silent, but an unavailable camera is a failure that has to be reported,
+/// and collapsing both to "nil" makes the whole flow look like a no-op.
+enum CardScanOutcome {
+  case captured(String)
+  case cancelled
+  case unavailable
+}
+
 final class CardScannerViewController: UIViewController {
-  /// Called exactly once, with the cropped JPEG's file path or nil if the user cancelled.
-  /// Invoked only after this controller has fully dismissed, so the caller is free to present
-  /// something of its own without racing the dismissal.
-  var onResult: ((String?) -> Void)?
+  /// Called exactly once. Invoked only after this controller has fully dismissed, so the caller
+  /// is free to present something of its own without racing the dismissal.
+  var onResult: ((CardScanOutcome) -> Void)?
 
   private let session = AVCaptureSession()
   private let videoOutput = AVCaptureVideoDataOutput()
@@ -31,7 +39,11 @@ final class CardScannerViewController: UIViewController {
   private var stableCount = 0
   private var lastQuad: VNRectangleObservation?
   private var hasFired = false
+
+  /// Main-queue-only state. `report(_:)` hops to main before touching any of it.
   private var didReport = false
+  private var hasAppeared = false
+  private var pendingOutcome: CardScanOutcome?
 
   private let requiredStableFrames = 8
   /// Normalized corner movement below which two detections count as the same, settled card.
@@ -51,6 +63,15 @@ final class CardScannerViewController: UIViewController {
     sessionQueue.async { [weak self] in
       self?.configureSession()
       self?.session.startRunning()
+    }
+  }
+
+  override func viewDidAppear(_ animated: Bool) {
+    super.viewDidAppear(animated)
+    hasAppeared = true
+    if let outcome = pendingOutcome {
+      pendingOutcome = nil
+      report(outcome)
     }
   }
 
@@ -113,7 +134,7 @@ final class CardScannerViewController: UIViewController {
           let input = try? AVCaptureDeviceInput(device: device),
           session.canAddInput(input) else {
       session.commitConfiguration()
-      report(nil)
+      report(.unavailable)
       return
     }
     session.addInput(input)
@@ -129,41 +150,67 @@ final class CardScannerViewController: UIViewController {
 
     session.commitConfiguration()
 
-    try? device.lockForConfiguration()
-    if device.isFocusModeSupported(.continuousAutoFocus) {
-      device.focusMode = .continuousAutoFocus
+    // Only unlock if the lock was actually taken — unlocking a device you don't hold is
+    // undefined per AVFoundation's contract.
+    if (try? device.lockForConfiguration()) != nil {
+      if device.isFocusModeSupported(.continuousAutoFocus) {
+        device.focusMode = .continuousAutoFocus
+      }
+      device.unlockForConfiguration()
     }
-    device.unlockForConfiguration()
   }
 
   // MARK: - Result
 
   @objc private func handleCancel() {
-    report(nil)
+    report(.cancelled)
   }
 
-  /// Stops the session, dismisses, and reports back — exactly once.
-  private func report(_ path: String?) {
+  /// Stops the session, dismisses, and reports back — exactly once. Safe to call from any queue.
+  private func report(_ outcome: CardScanOutcome) {
+    DispatchQueue.main.async { [weak self] in
+      self?.reportOnMain(outcome)
+    }
+  }
+
+  private func reportOnMain(_ outcome: CardScanOutcome) {
     guard !didReport else { return }
+
+    // Session setup runs from viewDidLoad, so a camera failure can land while the presentation
+    // animation is still in flight. UIKit drops a dismiss made against a controller that isn't
+    // finished presenting, which would leave the user on a black screen with a Cancel button
+    // that no longer does anything (didReport would already be set). Hold the outcome until
+    // viewDidAppear instead.
+    guard hasAppeared else {
+      pendingOutcome = outcome
+      return
+    }
     didReport = true
+
+    // Close the capture path using the flag the video queue owns, so no further frame can
+    // start a capture whose temp file would then be orphaned by the guard above.
+    videoQueue.async { [weak self] in self?.hasFired = true }
     sessionQueue.async { [weak self] in
       guard let self, self.session.isRunning else { return }
       self.session.stopRunning()
     }
-    DispatchQueue.main.async { [weak self] in
+
+    dismiss(animated: true) { [weak self] in
       guard let self else { return }
-      self.dismiss(animated: true) {
-        self.onResult?(path)
-        self.onResult = nil
-      }
+      self.onResult?(outcome)
+      self.onResult = nil
     }
   }
 
   /// A capture that produced nothing usable shouldn't strand the user on a frozen camera.
+  /// The detection flags belong to `videoQueue`, so reset them there rather than from whichever
+  /// queue delivered the photo callback.
   private func resumeAfterFailedCapture() {
-    hasFired = false
-    stableCount = 0
-    lastQuad = nil
+    videoQueue.async { [weak self] in
+      self?.hasFired = false
+      self?.stableCount = 0
+      self?.lastQuad = nil
+    }
     DispatchQueue.main.async { [weak self] in
       self?.hintLabel.text = "Couldn't read that one — try again"
     }
@@ -178,7 +225,9 @@ extension CardScannerViewController: AVCaptureVideoDataOutputSampleBufferDelegat
     didOutput sampleBuffer: CMSampleBuffer,
     from connection: AVCaptureConnection
   ) {
-    guard !hasFired, !didReport, let buffer = CMSampleBufferGetImageBuffer(sampleBuffer) else {
+    // `hasFired` is owned by this queue and is also what report(_:) sets to close the capture
+    // path, so it is the only flag this callback needs to consult.
+    guard !hasFired, let buffer = CMSampleBufferGetImageBuffer(sampleBuffer) else {
       return
     }
 
@@ -222,10 +271,15 @@ extension CardScannerViewController: AVCaptureVideoDataOutputSampleBufferDelegat
 
   private func draw(_ quad: VNRectangleObservation) {
     guard let preview = previewLayer else { return }
-    // Vision reports normalized points with the origin bottom-left; AVFoundation's capture-device
-    // space has it top-left, so flip y on the way through.
+    // Two coordinate spaces have to be undone here, not one. Detection runs with orientation
+    // `.right`, so Vision's normalized points are in the *upright* portrait image, origin
+    // bottom-left. `layerPointConverted(fromCaptureDevicePoint:)` wants the buffer's own space:
+    // origin top-left, in the camera's native landscape. Going back means undoing the quarter
+    // turn as well as the y flip — flipping y alone leaves the outline rotated off the card.
     let points = [quad.topLeft, quad.topRight, quad.bottomRight, quad.bottomLeft].map { point in
-      preview.layerPointConverted(fromCaptureDevicePoint: CGPoint(x: point.x, y: 1 - point.y))
+      preview.layerPointConverted(
+        fromCaptureDevicePoint: CGPoint(x: 1 - point.y, y: 1 - point.x)
+      )
     }
     let path = UIBezierPath()
     path.move(to: points[0])
@@ -274,7 +328,7 @@ extension CardScannerViewController: AVCapturePhotoCaptureDelegate {
       resumeAfterFailedCapture()
       return
     }
-    report(path)
+    report(.captured(path))
   }
 
   /// Perspective-corrects the card out of the full still. Detection is re-run here rather than

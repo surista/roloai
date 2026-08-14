@@ -1,5 +1,4 @@
 import {
-  addDoc,
   collection,
   deleteDoc,
   deleteField,
@@ -8,11 +7,13 @@ import {
   orderBy,
   query,
   serverTimestamp,
+  setDoc,
   updateDoc,
 } from 'firebase/firestore';
 import { deleteObject, getDownloadURL, ref, uploadBytes } from 'firebase/storage';
 import { cardFromFirestore, stripUndefined, type Card, type CardDraft } from '@roloai/shared';
 import { db, storage } from './firebase';
+import { makeThumbnail } from './documentScanner';
 
 const cardsCollection = collection(db, 'cards');
 
@@ -45,40 +46,78 @@ export function subscribeToCards(onChange: (cards: Card[]) => void): () => void 
   });
 }
 
+async function uploadTo(path: string, localUri: string): Promise<string> {
+  const response = await fetch(localUri);
+  const blob = await response.blob();
+  const imageRef = ref(storage, path);
+  await uploadBytes(imageRef, blob);
+  return getDownloadURL(imageRef);
+}
+
 export async function uploadCardImage(
   cardId: string,
   localUri: string,
   side: 'front' | 'back' = 'front'
 ): Promise<string> {
-  const response = await fetch(localUri);
-  const blob = await response.blob();
-  const imageRef = ref(storage, `cards/${cardId}/${side}-${Date.now()}.jpg`);
-  await uploadBytes(imageRef, blob);
-  return getDownloadURL(imageRef);
+  return uploadTo(`cards/${cardId}/${side}-${Date.now()}.jpg`, localUri);
 }
 
+/** Uploads the front image plus a small copy for the list views. */
+async function uploadFrontWithThumbnail(
+  cardId: string,
+  localUri: string
+): Promise<{ imageUrl: string; thumbUrl: string }> {
+  const stamp = Date.now();
+  const thumbUri = await makeThumbnail(localUri);
+  const [imageUrl, thumbUrl] = await Promise.all([
+    uploadTo(`cards/${cardId}/front-${stamp}.jpg`, localUri),
+    uploadTo(`cards/${cardId}/thumb-${stamp}.jpg`, thumbUri),
+  ]);
+  return { imageUrl, thumbUrl };
+}
+
+/**
+ * Storage writes happen before the document is created so a failed upload leaves nothing behind.
+ * The previous order — create the doc, then upload — surfaced an upload failure as a plain "Save
+ * failed" even though the card had already been written, so retrying produced a duplicate,
+ * photo-less card. The id has to exist first to key the storage path, so mint it up front rather
+ * than letting addDoc allocate it.
+ */
 export async function createCard(
   draft: CardDraft,
   localImageUri?: string,
   localBackImageUri?: string
 ): Promise<string> {
-  const docRef = await addDoc(cardsCollection, {
+  const docRef = doc(cardsCollection);
+
+  let front: { imageUrl: string; thumbUrl: string } | undefined;
+  let backUrl: string | undefined;
+  try {
+    if (localImageUri) {
+      front = await uploadFrontWithThumbnail(docRef.id, localImageUri);
+    }
+    if (localBackImageUri) {
+      backUrl = await uploadCardImage(docRef.id, localBackImageUri, 'back');
+    }
+  } catch (e) {
+    // Nothing has been written to Firestore yet, so the retry the caller prompts for starts
+    // clean. Sweep any half-finished upload so it doesn't sit in the bucket unreferenced.
+    await Promise.all(
+      [front?.imageUrl, front?.thumbUrl, backUrl]
+        .filter((url): url is string => Boolean(url))
+        .map(deleteImageByUrl)
+    );
+    throw e;
+  }
+
+  await setDoc(docRef, {
     ...stripUndefined(draft),
-    imageUrl: '',
+    imageUrl: front?.imageUrl ?? '',
+    ...(front ? { thumbUrl: front.thumbUrl } : {}),
+    ...(backUrl ? { imageBackUrl: backUrl } : {}),
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
   });
-
-  const updates: Partial<Card> = {};
-  if (localImageUri) {
-    updates.imageUrl = await uploadCardImage(docRef.id, localImageUri, 'front');
-  }
-  if (localBackImageUri) {
-    updates.imageBackUrl = await uploadCardImage(docRef.id, localBackImageUri, 'back');
-  }
-  if (Object.keys(updates).length > 0) {
-    await updateDoc(doc(db, 'cards', docRef.id), { ...updates, updatedAt: serverTimestamp() });
-  }
 
   return docRef.id;
 }
@@ -94,11 +133,28 @@ export async function updateCardImage(
   id: string,
   localUri: string,
   side: 'front' | 'back',
-  previousUrl?: string
+  previousUrl?: string,
+  previousThumbUrl?: string
 ): Promise<string> {
-  const url = await uploadCardImage(id, localUri, side);
+  // A front retake has to replace the thumbnail too, or the list keeps showing the old photo.
+  if (side === 'front') {
+    const { imageUrl, thumbUrl } = await uploadFrontWithThumbnail(id, localUri);
+    await updateDoc(doc(db, 'cards', id), {
+      imageUrl,
+      thumbUrl,
+      updatedAt: serverTimestamp(),
+    });
+    await Promise.all(
+      [previousUrl, previousThumbUrl]
+        .filter((url): url is string => Boolean(url))
+        .map(deleteImageByUrl)
+    );
+    return imageUrl;
+  }
+
+  const url = await uploadCardImage(id, localUri, 'back');
   await updateDoc(doc(db, 'cards', id), {
-    [side === 'front' ? 'imageUrl' : 'imageBackUrl']: url,
+    imageBackUrl: url,
     updatedAt: serverTimestamp(),
   });
 
@@ -110,9 +166,8 @@ export async function updateCardImage(
 }
 
 /**
- * Storage has no cascade delete, so the card's photos have to go explicitly or they stay in
- * the bucket forever. A retake already cleans up the file it replaced, so the URLs still on
- * the card are the only ones left to remove.
+ * A retake already cleans up the file it replaced, so the URLs still on the card — see
+ * `cardImageUrls` — are the only ones left to remove.
  */
 export async function deleteCard(id: string, imageUrls: (string | undefined)[] = []): Promise<void> {
   await Promise.all(

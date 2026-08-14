@@ -72,8 +72,16 @@ export default function CardListPage() {
         <div className="card-grid">
           {filtered.map((card) => (
             <Link key={card.id} to={`/cards/${card.id}`} className="card-tile">
-              {card.imageUrl ? (
-                <img src={card.imageUrl} alt="" className="card-thumb" />
+              {/* thumbUrl is absent on cards saved before thumbnails existed, so fall back to
+                  the full image rather than showing a blank tile for them. */}
+              {card.thumbUrl || card.imageUrl ? (
+                <img
+                  src={card.thumbUrl || card.imageUrl}
+                  alt=""
+                  className="card-thumb"
+                  loading="lazy"
+                  decoding="async"
+                />
               ) : (
                 <div className="card-thumb card-thumb-placeholder" />
               )}

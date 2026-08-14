@@ -13,6 +13,10 @@ const anthropicApiKey = defineSecret('ANTHROPIC_API_KEY');
  */
 const OWNER_EMAIL = 'surista@gmail.com';
 
+/** Roughly 6MB of JPEG once decoded — well inside the 10MB callable limit, and far above what
+ *  the client's 1600px/0.7-quality re-encode actually produces. */
+const MAX_IMAGE_BASE64_LENGTH = 8_000_000;
+
 const CardExtractionSchema = z.object({
   firstName: z.string(),
   lastName: z.string(),
@@ -34,8 +38,9 @@ interface ExtractCardRequest {
 
 export const extractCard = onCall<ExtractCardRequest>(
   // A two-image vision call can take a while; 30s was tight enough to surface as a spurious
-  // "check your connection" on the client.
-  { secrets: [anthropicApiKey], region: 'us-central1', timeoutSeconds: 60 },
+  // "check your connection" on the client. maxInstances caps how much Anthropic budget a
+  // burst of calls can spend, since nothing else rate-limits this.
+  { secrets: [anthropicApiKey], region: 'us-central1', timeoutSeconds: 60, maxInstances: 3 },
   async (request) => {
     if (!request.auth) {
       throw new HttpsError('unauthenticated', 'Sign in required.');
@@ -48,8 +53,18 @@ export const extractCard = onCall<ExtractCardRequest>(
     if (!frontImageBase64 || typeof frontImageBase64 !== 'string') {
       throw new HttpsError('invalid-argument', 'frontImageBase64 is required.');
     }
+    if (frontImageBase64.length > MAX_IMAGE_BASE64_LENGTH) {
+      throw new HttpsError('invalid-argument', 'Image is too large.');
+    }
 
-    const client = new Anthropic({ apiKey: anthropicApiKey.value() });
+    // The SDK's own defaults (10 min timeout, 2 retries) outlast this function's 60s budget, so
+    // a slow first attempt plus a retry gets killed by the platform *after* Anthropic has been
+    // billed. Give up inside our own window instead.
+    const client = new Anthropic({
+      apiKey: anthropicApiKey.value(),
+      maxRetries: 1,
+      timeout: 45_000,
+    });
 
     const content: Array<Anthropic.ImageBlockParam | Anthropic.TextBlockParam> = [
       {
@@ -57,7 +72,11 @@ export const extractCard = onCall<ExtractCardRequest>(
         source: { type: 'base64', media_type: 'image/jpeg', data: frontImageBase64 },
       },
     ];
-    if (backImageBase64 && typeof backImageBase64 === 'string') {
+    if (
+      backImageBase64 &&
+      typeof backImageBase64 === 'string' &&
+      backImageBase64.length <= MAX_IMAGE_BASE64_LENGTH
+    ) {
       content.push({
         type: 'image',
         source: { type: 'base64', media_type: 'image/jpeg', data: backImageBase64 },
@@ -72,11 +91,30 @@ export const extractCard = onCall<ExtractCardRequest>(
 
     const response = await client.messages.parse({
       model: 'claude-sonnet-5',
-      max_tokens: 2048,
-      output_config: { format: zodOutputFormat(CardExtractionSchema) },
+      // max_tokens caps thinking *and* output together, and Sonnet 5 runs adaptive thinking
+      // whenever `thinking` is omitted. Reading a card is transcription, not reasoning, so the
+      // thinking pass buys nothing and only competes with rawText — a full transcription of
+      // both sides — for the budget. Turning it off keeps the whole allowance for the answer.
+      thinking: { type: 'disabled' },
+      max_tokens: 8192,
+      output_config: {
+        effort: 'low',
+        format: zodOutputFormat(CardExtractionSchema),
+      },
       messages: [{ role: 'user', content }],
     });
 
+    // A truncated or refused response also yields a null parsed_output, and each needs its own
+    // message — "check your connection" sends the user into a retry loop that can't succeed.
+    if (response.stop_reason === 'max_tokens') {
+      throw new HttpsError(
+        'resource-exhausted',
+        'There was too much text on this card to read in one pass. Try scanning one side at a time.'
+      );
+    }
+    if (response.stop_reason === 'refusal') {
+      throw new HttpsError('invalid-argument', 'This image could not be processed.');
+    }
     if (!response.parsed_output) {
       throw new HttpsError('internal', 'Could not extract card details from the image.');
     }

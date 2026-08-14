@@ -4,15 +4,16 @@ import {
   Text,
   TextInput,
   ScrollView,
-  Pressable,
   Image,
   StyleSheet,
   ActivityIndicator,
   Alert,
 } from 'react-native';
-import type { CardDraft } from '@roloai/shared';
+import { relabelPhones, relabelEmails, type CardDraft } from '@roloai/shared';
+import Button from './Button';
 import ImageViewerModal from './ImageViewerModal';
 import { useScanWithReview } from '../lib/useScanWithReview';
+import { alertForScanFailure } from '../lib/cameraAlerts';
 
 function joinPhones(phones: { number: string }[]): string {
   return phones.map((p) => p.number).join(', ');
@@ -27,12 +28,22 @@ function splitToList(value: string): string[] {
     .filter(Boolean);
 }
 
+export type CardFormFields = Omit<
+  CardDraft,
+  'imageUrl' | 'imageBackUrl' | 'thumbUrl' | 'source' | 'rawOcrText'
+>;
+
 interface Props {
   draft: CardDraft;
   imageUri?: string;
   backImageUri?: string;
   saveLabel: string;
-  onSave: (fields: Omit<CardDraft, 'imageUrl' | 'source' | 'rawOcrText'>) => Promise<void>;
+  /**
+   * Image URLs are excluded deliberately: the form never sets them, and letting them through as
+   * `undefined` would make updateCard's deleteField() mapping wipe the card's photos on a plain
+   * text edit.
+   */
+  onSave: (fields: CardFormFields) => Promise<void>;
   /** When provided, shows Retake/Add Photo controls for an already-saved card. */
   onRetakePhoto?: (side: 'front' | 'back', localUri: string) => Promise<void>;
   extraAction?: { label: string; onPress: () => void; destructive?: boolean };
@@ -71,9 +82,12 @@ export default function CardForm({
     if (!onRetakePhoto || retakingSide) return;
     setRetakingSide(side);
     try {
-      const uri = await scan(side === 'front' ? 'Front of card' : 'Back of card');
-      if (!uri) return;
-      await onRetakePhoto(side, uri);
+      const result = await scan(side === 'front' ? 'Front of card' : 'Back of card');
+      if (result.status !== 'ok') {
+        alertForScanFailure(result);
+        return;
+      }
+      await onRetakePhoto(side, result.uri);
     } catch (e) {
       console.error('Retake failed:', e);
       Alert.alert('Retake failed', 'Check your connection and try again.');
@@ -94,8 +108,8 @@ export default function CardForm({
         lastName: lastName.trim(),
         jobTitle: jobTitle.trim() || undefined,
         company: company.trim() || undefined,
-        phones: splitToList(phonesText).map((number) => ({ label: 'work', number })),
-        emails: splitToList(emailsText).map((address) => ({ label: 'work', address })),
+        phones: relabelPhones(splitToList(phonesText), draft.phones),
+        emails: relabelEmails(splitToList(emailsText), draft.emails),
         website: website.trim() || undefined,
         address: address.trim() || undefined,
         notes: notes.trim() || undefined,
@@ -110,25 +124,42 @@ export default function CardForm({
   };
 
   return (
-    <ScrollView contentContainerStyle={styles.container}>
+    <ScrollView
+      contentContainerStyle={styles.container}
+      // Without these three the bottom of the form is unreachable: iOS puts the keyboard over
+      // Notes and Save with no inset to scroll past, and the default keyboardShouldPersistTaps
+      // ("never") makes the first tap on Save only dismiss the keyboard, so the button reads as
+      // unresponsive.
+      keyboardShouldPersistTaps="handled"
+      keyboardDismissMode="interactive"
+      automaticallyAdjustKeyboardInsets
+    >
       {(imageUri || onRetakePhoto) && (
         <View style={styles.imageBlock}>
           <View style={styles.imageHeader}>
             <Text style={styles.label}>Front</Text>
             {onRetakePhoto && (
-              <Pressable onPress={() => handleRetake('front')} disabled={retakingSide !== null}>
+              <Button
+                onPress={() => handleRetake('front')}
+                disabled={retakingSide !== null}
+                accessibilityLabel={imageUri ? 'Retake front photo' : 'Add front photo'}
+              >
                 {retakingSide === 'front' ? (
                   <ActivityIndicator size="small" />
                 ) : (
                   <Text style={styles.retakeText}>{imageUri ? 'Retake' : 'Add Photo'}</Text>
                 )}
-              </Pressable>
+              </Button>
             )}
           </View>
           {imageUri ? (
-            <Pressable onPress={() => setViewerIndex(0)}>
+            <Button
+              onPress={() => setViewerIndex(0)}
+              hitSlop={undefined}
+              accessibilityLabel="View front photo full screen"
+            >
               <Image source={{ uri: imageUri }} style={styles.preview} />
-            </Pressable>
+            </Button>
           ) : (
             <View style={[styles.preview, styles.previewEmpty]}>
               <Text style={styles.previewEmptyText}>No front photo yet</Text>
@@ -142,19 +173,27 @@ export default function CardForm({
           <View style={styles.imageHeader}>
             <Text style={styles.label}>Back</Text>
             {onRetakePhoto && (
-              <Pressable onPress={() => handleRetake('back')} disabled={retakingSide !== null}>
+              <Button
+                onPress={() => handleRetake('back')}
+                disabled={retakingSide !== null}
+                accessibilityLabel={backImageUri ? 'Retake back photo' : 'Add back photo'}
+              >
                 {retakingSide === 'back' ? (
                   <ActivityIndicator size="small" />
                 ) : (
                   <Text style={styles.retakeText}>{backImageUri ? 'Retake' : 'Add Photo'}</Text>
                 )}
-              </Pressable>
+              </Button>
             )}
           </View>
           {backImageUri ? (
-            <Pressable onPress={() => setViewerIndex(imageUri ? 1 : 0)}>
+            <Button
+              onPress={() => setViewerIndex(imageUri ? 1 : 0)}
+              hitSlop={undefined}
+              accessibilityLabel="View back photo full screen"
+            >
               <Image source={{ uri: backImageUri }} style={styles.preview} />
-            </Pressable>
+            </Button>
           ) : (
             <View style={[styles.preview, styles.previewEmpty]}>
               <Text style={styles.previewEmptyText}>No back photo yet</Text>
@@ -189,22 +228,36 @@ export default function CardForm({
         placeholder="comma separated"
         keyboardType="email-address"
         autoCapitalize="none"
+        autoCorrect={false}
       />
-      <Field label="Website" value={website} onChangeText={setWebsite} autoCapitalize="none" />
+      <Field
+        label="Website"
+        value={website}
+        onChangeText={setWebsite}
+        keyboardType="url"
+        autoCapitalize="none"
+        autoCorrect={false}
+      />
       <Field label="Address" value={address} onChangeText={setAddress} />
       <Field label="Tags" value={tagsText} onChangeText={setTagsText} placeholder="comma separated" />
       <Field label="Notes" value={notes} onChangeText={setNotes} multiline />
 
-      <Pressable style={styles.saveButton} onPress={handleSave} disabled={saving}>
+      <Button
+        style={styles.saveButton}
+        onPress={handleSave}
+        disabled={saving}
+        accessibilityLabel={saveLabel}
+        accessibilityState={{ busy: saving }}
+      >
         {saving ? <ActivityIndicator color="#fff" /> : <Text style={styles.saveButtonText}>{saveLabel}</Text>}
-      </Pressable>
+      </Button>
 
       {extraAction && (
-        <Pressable style={styles.extraButton} onPress={extraAction.onPress}>
+        <Button style={styles.extraButton} onPress={extraAction.onPress}>
           <Text style={[styles.extraButtonText, extraAction.destructive && styles.destructiveText]}>
             {extraAction.label}
           </Text>
-        </Pressable>
+        </Button>
       )}
     </ScrollView>
   );
@@ -216,8 +269,9 @@ function Field(props: {
   onChangeText: (v: string) => void;
   placeholder?: string;
   multiline?: boolean;
-  keyboardType?: 'default' | 'email-address' | 'phone-pad';
+  keyboardType?: 'default' | 'email-address' | 'phone-pad' | 'url';
   autoCapitalize?: 'none' | 'sentences' | 'words';
+  autoCorrect?: boolean;
 }) {
   return (
     <View style={styles.field}>
@@ -230,6 +284,11 @@ function Field(props: {
         multiline={props.multiline}
         keyboardType={props.keyboardType}
         autoCapitalize={props.autoCapitalize}
+        autoCorrect={props.autoCorrect}
+        // Deliberately no textContentType on these: they hold *someone else's* details, and iOS
+        // would offer to autofill the signed-in user's own name, company, and address.
+        textContentType="none"
+        returnKeyType={props.multiline ? 'default' : 'done'}
       />
     </View>
   );

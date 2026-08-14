@@ -1,6 +1,9 @@
 import React, { useCallback, useRef, useState } from 'react';
-import { Modal, View, Image, Text, Pressable, StyleSheet } from 'react-native';
-import { scanCardEdge } from './documentScanner';
+import { Modal, View, Image, Text, StyleSheet } from 'react-native';
+import { StatusBar } from 'expo-status-bar';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import Button from '../components/Button';
+import { scanCardEdge, type CardScanResult } from './documentScanner';
 
 /**
  * Wraps scanCardEdge() with a confirmation step: the scanner auto-captures a single shot and
@@ -9,69 +12,90 @@ import { scanCardEdge } from './documentScanner';
  *
  * The scanner resolves only once it has fully dismissed, so showing this modal doesn't race the
  * dismissal — a UIKit presentation made against a controller mid-dismissal is dropped by iOS.
+ *
+ * The native module's outcome is passed straight through rather than flattened to a uri-or-null,
+ * so the caller can tell a cancel (say nothing) from a permission denial (must be explained).
  */
 export function useScanWithReview() {
+  const insets = useSafeAreaInsets();
   const [pendingUri, setPendingUri] = useState<string | null>(null);
   const [label, setLabel] = useState<string | undefined>(undefined);
-  const resolverRef = useRef<((uri: string | null) => void) | null>(null);
+  const resolverRef = useRef<((result: CardScanResult) => void) | null>(null);
 
-  const finish = (uri: string | null) => {
-    resolverRef.current?.(uri);
+  const settle = (result: CardScanResult) => {
+    resolverRef.current?.(result);
     resolverRef.current = null;
     setPendingUri(null);
     setLabel(undefined);
   };
 
-  const scan = useCallback((scanLabel?: string): Promise<string | null> => {
+  const scan = useCallback((scanLabel?: string): Promise<CardScanResult> => {
     return new Promise((resolve) => {
       resolverRef.current = resolve;
       setLabel(scanLabel);
       // A throw from the native scanner would otherwise leave this promise unsettled forever,
-      // hanging whichever caller is awaiting it — treat a failure the same as a cancel.
+      // hanging whichever caller is awaiting it — report it as an unusable camera instead.
       scanCardEdge()
-        .catch((e) => {
+        .catch((e): CardScanResult => {
           console.error('Card scanner failed:', e);
-          return null;
+          return { status: 'unavailable' };
         })
-        .then((uri) => {
-          if (!uri) {
+        .then((result) => {
+          if (result.status !== 'ok') {
             resolverRef.current = null;
             setLabel(undefined);
-            resolve(null);
+            resolve(result);
             return;
           }
-          setPendingUri(uri);
+          setPendingUri(result.uri);
         });
     });
   }, []);
 
   const handleRetake = async () => {
     try {
-      const uri = await scanCardEdge();
-      if (uri) {
-        setPendingUri(uri);
+      const result = await scanCardEdge();
+      if (result.status === 'ok') {
+        setPendingUri(result.uri);
       }
-      // If cancelled, stay in review with the existing photo rather than losing it.
+      // Anything else (including a cancel) leaves the review open on the existing photo rather
+      // than losing it — the user still has Accept and Cancel to choose from.
     } catch (e) {
       console.error('Card scanner failed:', e);
     }
   };
 
   const reviewModal = pendingUri ? (
-    <Modal visible transparent animationType="fade">
-      <View style={styles.backdrop}>
+    <Modal
+      visible
+      transparent
+      animationType="fade"
+      statusBarTranslucent
+      onRequestClose={() => settle({ status: 'cancelled' })}
+    >
+      <View
+        style={[
+          styles.backdrop,
+          { paddingTop: insets.top + 20, paddingBottom: insets.bottom + 20 },
+        ]}
+      >
+        {/* Solid black backdrop — the app's "auto" (dark) status bar would be invisible. */}
+        <StatusBar style="light" />
         {label && <Text style={styles.label}>{label}</Text>}
         <Image source={{ uri: pendingUri }} style={styles.preview} resizeMode="contain" />
         <View style={styles.buttonRow}>
-          <Pressable style={styles.cancelButton} onPress={() => finish(null)}>
+          <Button style={styles.cancelButton} onPress={() => settle({ status: 'cancelled' })}>
             <Text style={styles.cancelButtonText}>Cancel</Text>
-          </Pressable>
-          <Pressable style={styles.retakeButton} onPress={handleRetake}>
+          </Button>
+          <Button style={styles.retakeButton} onPress={handleRetake}>
             <Text style={styles.retakeButtonText}>Retake</Text>
-          </Pressable>
-          <Pressable style={styles.acceptButton} onPress={() => finish(pendingUri)}>
+          </Button>
+          <Button
+            style={styles.acceptButton}
+            onPress={() => settle({ status: 'ok', uri: pendingUri })}
+          >
             <Text style={styles.acceptButtonText}>Accept</Text>
-          </Pressable>
+          </Button>
         </View>
       </View>
     </Modal>
@@ -86,7 +110,6 @@ const styles = StyleSheet.create({
     backgroundColor: '#000',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 20,
   },
   label: { color: '#fff', fontSize: 16, fontWeight: '600', marginBottom: 16 },
   preview: { width: '100%', height: '65%', borderRadius: 10, backgroundColor: '#111' },

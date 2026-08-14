@@ -35,6 +35,28 @@ export function parseQrPayload(data: string): CardDraft {
   return draft;
 }
 
+/**
+ * Pulls a usable label out of a vCard property's parameters — `TEL;TYPE=CELL:...` is a mobile,
+ * not a work number, and flattening every entry to "work" loses the only thing that
+ * distinguishes them.
+ */
+function labelFromParams(rawKey: string, fallback: string): string {
+  const params = rawKey.split(';').slice(1);
+  for (const param of params) {
+    const [name, value] = param.split('=');
+    if (!value) continue;
+    if (name.toUpperCase() !== 'TYPE') continue;
+    // TYPE can be a comma-separated set (TYPE=WORK,VOICE,PREF). VOICE/PREF/INTERNET say
+    // nothing useful about which number this is, so skip past them.
+    const meaningful = value
+      .split(',')
+      .map((t) => t.trim().toLowerCase())
+      .find((t) => t && !['voice', 'pref', 'internet', 'other'].includes(t));
+    if (meaningful) return meaningful;
+  }
+  return fallback;
+}
+
 function parseVCard(data: string): Partial<CardDraft> {
   const result: Partial<CardDraft> = { phones: [], emails: [] };
   const lines = data.split(/\r?\n/);
@@ -66,10 +88,10 @@ function parseVCard(data: string): Partial<CardDraft> {
         result.company = value.split(';')[0];
         break;
       case 'TEL':
-        result.phones!.push({ label: 'work', number: value });
+        result.phones!.push({ label: labelFromParams(rawKey, 'work'), number: value });
         break;
       case 'EMAIL':
-        result.emails!.push({ label: 'work', address: value });
+        result.emails!.push({ label: labelFromParams(rawKey, 'work'), address: value });
         break;
       case 'URL':
         result.website = value;

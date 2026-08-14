@@ -11,6 +11,9 @@ import {
   type NativeSyntheticEvent,
   type NativeScrollEvent,
 } from 'react-native';
+import { StatusBar } from 'expo-status-bar';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import Button from './Button';
 
 interface Props {
   visible: boolean;
@@ -21,6 +24,7 @@ interface Props {
 
 export default function ImageViewerModal({ visible, images, initialIndex, onClose }: Props) {
   const { width, height } = useWindowDimensions();
+  const insets = useSafeAreaInsets();
   const [pageIndex, setPageIndex] = useState(initialIndex);
 
   const handleScroll = (e: NativeSyntheticEvent<NativeScrollEvent>) => {
@@ -35,14 +39,21 @@ export default function ImageViewerModal({ visible, images, initialIndex, onClos
       animationType="fade"
       onRequestClose={onClose}
       onShow={() => setPageIndex(initialIndex)}
+      statusBarTranslucent
     >
       <View style={styles.backdrop}>
-        <Pressable style={styles.closeButton} onPress={onClose} hitSlop={12}>
+        {/* Near-black backdrop, so the app's "auto" (dark) status bar would be invisible. */}
+        <StatusBar style="light" />
+        <Button
+          style={[styles.closeButton, { top: insets.top + 12 }]}
+          onPress={onClose}
+          accessibilityLabel="Close"
+        >
           <Text style={styles.closeButtonText}>Close</Text>
-        </Pressable>
+        </Button>
 
         {images.length > 1 && (
-          <Text style={styles.label}>{images[pageIndex]?.label}</Text>
+          <Text style={[styles.label, { top: insets.top + 16 }]}>{images[pageIndex]?.label}</Text>
         )}
 
         <ScrollView
@@ -53,14 +64,22 @@ export default function ImageViewerModal({ visible, images, initialIndex, onClos
           onMomentumScrollEnd={handleScroll}
         >
           {images.map((image) => (
-            <Pressable key={image.uri} onPress={onClose} style={{ width, height }}>
+            // Deliberately a bare Pressable: a dimming flash over a photo reads as a rendering
+            // glitch rather than as feedback. This is a backdrop, not a button.
+            <Pressable
+              key={image.uri}
+              onPress={onClose}
+              style={{ width, height }}
+              accessibilityRole="image"
+              accessibilityLabel={`${image.label} of card. Double tap to close.`}
+            >
               <Image source={{ uri: image.uri }} style={styles.image} resizeMode="contain" />
             </Pressable>
           ))}
         </ScrollView>
 
         {images.length > 1 && (
-          <View style={styles.dots}>
+          <View style={[styles.dots, { bottom: insets.bottom + 24 }]}>
             {images.map((image, i) => (
               <View key={image.uri} style={[styles.dot, i === pageIndex && styles.dotActive]} />
             ))}
@@ -76,7 +95,6 @@ const styles = StyleSheet.create({
   image: { width: '100%', height: '100%' },
   closeButton: {
     position: 'absolute',
-    top: 60,
     right: 20,
     zIndex: 1,
     paddingVertical: 8,
@@ -87,7 +105,6 @@ const styles = StyleSheet.create({
   closeButtonText: { color: '#fff', fontWeight: '600' },
   label: {
     position: 'absolute',
-    top: 64,
     alignSelf: 'center',
     color: '#fff',
     fontWeight: '600',
@@ -95,7 +112,6 @@ const styles = StyleSheet.create({
   },
   dots: {
     position: 'absolute',
-    bottom: 40,
     alignSelf: 'center',
     flexDirection: 'row',
     gap: 8,

@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { View, ActivityIndicator, Alert } from 'react-native';
 import { doc, onSnapshot } from 'firebase/firestore';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
-import { cardFromFirestore, type Card } from '@roloai/shared';
+import { cardFromFirestore, cardImageUrls, type Card } from '@roloai/shared';
 import type { RootStackParamList } from '../navigation/types';
 import { db } from '../lib/firebase';
 import { deleteCard, updateCard, updateCardImage } from '../lib/cards';
@@ -39,7 +39,7 @@ export default function CardDetailScreen({ route, navigation }: Props) {
         text: 'Delete',
         style: 'destructive',
         onPress: async () => {
-          await deleteCard(cardId, [card.imageUrl, card.imageBackUrl]);
+          await deleteCard(cardId, cardImageUrls(card));
           navigation.popToTop();
         },
       },
@@ -57,7 +57,13 @@ export default function CardDetailScreen({ route, navigation }: Props) {
       }}
       onRetakePhoto={async (side, localUri) => {
         const previousUrl = side === 'front' ? card.imageUrl : card.imageBackUrl;
-        await updateCardImage(cardId, localUri, side, previousUrl || undefined);
+        await updateCardImage(
+          cardId,
+          localUri,
+          side,
+          previousUrl || undefined,
+          side === 'front' ? card.thumbUrl : undefined
+        );
       }}
       extraAction={{ label: 'Delete Card', onPress: handleDelete, destructive: true }}
     />

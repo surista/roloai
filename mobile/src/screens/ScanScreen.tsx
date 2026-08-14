@@ -1,19 +1,24 @@
 import React, { useCallback, useState } from 'react';
-import { View, Text, Image, Pressable, StyleSheet, ActivityIndicator, Alert } from 'react-native';
+import { View, Text, Image, StyleSheet, ActivityIndicator, Alert } from 'react-native';
+import { StatusBar } from 'expo-status-bar';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import Button from '../components/Button';
 import { CameraView, useCameraPermissions, type BarcodeScanningResult } from 'expo-camera';
 import { useFocusEffect } from '@react-navigation/native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../navigation/types';
 import { parseQrPayload } from '../lib/parseCard';
-import { extractCard } from '../lib/functions';
+import { extractCard, CardExtractionError } from '../lib/functions';
 import { prepareImageForUpload } from '../lib/documentScanner';
 import { useScanWithReview } from '../lib/useScanWithReview';
+import { alertForScanFailure, alertForCameraPermissionDenied } from '../lib/cameraAlerts';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Scan'>;
 type Mode = 'photo' | 'qr';
 
 export default function ScanScreen({ navigation }: Props) {
   const [permission, requestPermission] = useCameraPermissions();
+  const insets = useSafeAreaInsets();
   const [mode, setMode] = useState<Mode>('photo');
   const [busy, setBusy] = useState(false);
   const [qrLocked, setQrLocked] = useState(false);
@@ -43,7 +48,12 @@ export default function ScanScreen({ navigation }: Props) {
       });
     } catch (e) {
       console.error('Card extraction failed:', e);
-      Alert.alert('Scan failed', 'Could not read the card. Check your connection and try again.');
+      Alert.alert(
+        'Scan failed',
+        e instanceof CardExtractionError
+          ? e.message
+          : 'Could not read the card. Check your connection and try again.'
+      );
     } finally {
       setBusy(false);
     }
@@ -54,23 +64,42 @@ export default function ScanScreen({ navigation }: Props) {
   // modal mid-dismissal, so the prompt never reliably appeared.
   const handleScanFront = async () => {
     if (busy) return;
-    const uri = await scan('Front of card');
-    if (!uri) return;
-    setFrontUri(uri);
+    const result = await scan('Front of card');
+    if (result.status === 'ok') {
+      setFrontUri(result.uri);
+      return;
+    }
+    alertForScanFailure(result);
   };
 
   const handleScanBack = async () => {
     if (!frontUri || busy) return;
-    const backUri = await scan('Back of card');
+    const result = await scan('Back of card');
     // Cancelling the back scan returns to the choice step rather than silently committing to
     // a front-only card — "Skip" is there for that, and is the deliberate way to say it.
-    if (!backUri) return;
-    await finishWithPhotos(frontUri, backUri);
+    if (result.status !== 'ok') {
+      alertForScanFailure(result);
+      return;
+    }
+    await finishWithPhotos(frontUri, result.uri);
   };
 
   const handleSkipBack = async () => {
     if (!frontUri || busy) return;
     await finishWithPhotos(frontUri);
+  };
+
+  // Once permission has been refused, requestPermission() resolves without prompting, so the
+  // button would just sit there doing nothing. canAskAgain is what tells the two apart.
+  const handleRequestCameraPermission = async () => {
+    if (permission && !permission.canAskAgain) {
+      alertForCameraPermissionDenied();
+      return;
+    }
+    const next = await requestPermission();
+    if (!next.granted && !next.canAskAgain) {
+      alertForCameraPermissionDenied();
+    }
   };
 
   const handleBarcodeScanned = (result: BarcodeScanningResult) => {
@@ -82,13 +111,18 @@ export default function ScanScreen({ navigation }: Props) {
 
   return (
     <View style={styles.container}>
+      {/* This screen is black end to end; the app's "auto" status bar resolves to dark content
+          under the forced light appearance, which renders black on black. */}
+      <StatusBar style="light" />
       {mode === 'qr' &&
         (!permission ? null : !permission.granted ? (
           <View style={styles.permissionContainer}>
             <Text style={styles.permissionText}>RoloAI needs camera access to scan QR codes.</Text>
-            <Pressable style={styles.button} onPress={requestPermission}>
-              <Text style={styles.buttonText}>Grant Camera Access</Text>
-            </Pressable>
+            <Button style={styles.button} onPress={handleRequestCameraPermission}>
+              <Text style={styles.buttonText}>
+                {permission.canAskAgain ? 'Grant Camera Access' : 'Open Settings'}
+              </Text>
+            </Button>
           </View>
         ) : (
           <CameraView
@@ -110,12 +144,12 @@ export default function ScanScreen({ navigation }: Props) {
               <ActivityIndicator color="#fff" />
             ) : (
               <>
-                <Pressable style={styles.scanButton} onPress={handleScanBack}>
+                <Button style={styles.scanButton} onPress={handleScanBack}>
                   <Text style={styles.scanButtonText}>Scan Back</Text>
-                </Pressable>
-                <Pressable style={styles.secondaryButton} onPress={handleSkipBack}>
+                </Button>
+                <Button style={styles.secondaryButton} onPress={handleSkipBack}>
                   <Text style={styles.secondaryButtonText}>Skip — front only</Text>
-                </Pressable>
+                </Button>
               </>
             )}
           </View>
@@ -126,39 +160,47 @@ export default function ScanScreen({ navigation }: Props) {
               The camera will detect the card's edges and crop to just the card, like a document
               scanner.
             </Text>
-            <Pressable style={styles.scanButton} onPress={handleScanFront} disabled={busy}>
+            <Button style={styles.scanButton} onPress={handleScanFront} disabled={busy}>
               {busy ? (
                 <ActivityIndicator color="#fff" />
               ) : (
                 <Text style={styles.scanButtonText}>Scan Card</Text>
               )}
-            </Pressable>
+            </Button>
           </View>
         ))}
 
       {/* Hidden mid-capture: switching to QR would silently discard the front photo. */}
-      <View style={[styles.modeSwitch, frontUri && styles.hidden]}>
-        <Pressable
+      <View
+        style={[styles.modeSwitch, { top: insets.top + 8 }, frontUri && styles.hidden]}
+      >
+        <Button
           style={[styles.modeButton, mode === 'photo' && styles.modeButtonActive]}
+          accessibilityState={{ selected: mode === 'photo' }}
           onPress={() => {
             setMode('photo');
             setQrLocked(false);
           }}
         >
           <Text style={mode === 'photo' ? styles.modeTextActive : styles.modeText}>Photo</Text>
-        </Pressable>
-        <Pressable
+        </Button>
+        <Button
           style={[styles.modeButton, mode === 'qr' && styles.modeButtonActive]}
+          accessibilityState={{ selected: mode === 'qr' }}
           onPress={() => {
             setMode('qr');
             setQrLocked(false);
           }}
         >
           <Text style={mode === 'qr' ? styles.modeTextActive : styles.modeText}>QR Code</Text>
-        </Pressable>
+        </Button>
       </View>
 
-      {mode === 'qr' && <Text style={styles.hint}>Point the camera at a QR code on the card</Text>}
+      {mode === 'qr' && (
+        <Text style={[styles.hint, { bottom: insets.bottom + 24 }]}>
+          Point the camera at a QR code on the card
+        </Text>
+      )}
 
       {reviewModal}
     </View>
@@ -207,7 +249,6 @@ const styles = StyleSheet.create({
   hidden: { display: 'none' },
   modeSwitch: {
     position: 'absolute',
-    top: 60,
     alignSelf: 'center',
     flexDirection: 'row',
     backgroundColor: 'rgba(0,0,0,0.5)',
@@ -220,7 +261,6 @@ const styles = StyleSheet.create({
   modeTextActive: { color: '#111', fontWeight: '600' },
   hint: {
     position: 'absolute',
-    bottom: 60,
     alignSelf: 'center',
     color: '#fff',
     backgroundColor: 'rgba(0,0,0,0.5)',

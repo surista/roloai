@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from 'react';
-import type { CardDraft } from '@roloai/shared';
+import { relabelPhones, relabelEmails, type CardDraft } from '@roloai/shared';
 import Lightbox from './Lightbox';
 
 function joinPhones(phones: { number: string }[]): string {
@@ -15,12 +15,22 @@ function splitToList(value: string): string[] {
     .filter(Boolean);
 }
 
+export type CardFormFields = Omit<
+  CardDraft,
+  'imageUrl' | 'imageBackUrl' | 'thumbUrl' | 'source' | 'rawOcrText'
+>;
+
 interface Props {
   draft: CardDraft;
   imageUrl?: string;
   backImageUrl?: string;
   saveLabel: string;
-  onSave: (fields: Omit<CardDraft, 'imageUrl' | 'source' | 'rawOcrText'>) => Promise<void>;
+  /**
+   * Image URLs are excluded deliberately: the form never sets them, and letting them through as
+   * `undefined` would make updateCard's deleteField() mapping wipe the card's photos on a plain
+   * text edit.
+   */
+  onSave: (fields: CardFormFields) => Promise<void>;
   extraAction?: { label: string; onClick: () => void; destructive?: boolean };
 }
 
@@ -53,8 +63,8 @@ export default function CardForm({ draft, imageUrl, backImageUrl, saveLabel, onS
         lastName: lastName.trim(),
         jobTitle: jobTitle.trim() || undefined,
         company: company.trim() || undefined,
-        phones: splitToList(phonesText).map((number) => ({ label: 'work', number })),
-        emails: splitToList(emailsText).map((address) => ({ label: 'work', address })),
+        phones: relabelPhones(splitToList(phonesText), draft.phones),
+        emails: relabelEmails(splitToList(emailsText), draft.emails),
         website: website.trim() || undefined,
         address: address.trim() || undefined,
         notes: notes.trim() || undefined,
