@@ -27,12 +27,22 @@ final class CardScannerViewController: UIViewController {
 
   private let session = AVCaptureSession()
   private let videoOutput = AVCaptureVideoDataOutput()
-  private let photoOutput = AVCapturePhotoOutput()
   private let sessionQueue = DispatchQueue(label: "com.roloai.cardscanner.session")
   private let videoQueue = DispatchQueue(label: "com.roloai.cardscanner.video")
   private var previewLayer: AVCaptureVideoPreviewLayer?
   private let quadLayer = CAShapeLayer()
   private let hintLabel = UILabel()
+  /// Full-screen white overlay pulsed on capture. This is the *only* signal that a shot was
+  /// taken: frames come off the video stream rather than AVCapturePhotoOutput, so iOS plays no
+  /// shutter sound, and without a visual cue the capture is completely silent and invisible.
+  private let flashView = UIView()
+
+  /// Held so the frame callback can ask whether the lens is still hunting. Reading
+  /// `isAdjustingFocus` is the only way to know; a quad can sit perfectly still while the
+  /// image behind it is still soft.
+  private var captureDevice: AVCaptureDevice?
+  /// When the session began delivering frames, used for the warm-up hold below.
+  private var streamStartedAt: CFTimeInterval?
 
   /// Consecutive frames the detected quad has held still. Auto-capture fires once this reaches
   /// `requiredStableFrames`, so a card still being positioned doesn't trigger a shot.
@@ -45,12 +55,21 @@ final class CardScannerViewController: UIViewController {
   private var hasAppeared = false
   private var pendingOutcome: CardScanOutcome?
 
-  private let requiredStableFrames = 8
+  private let requiredStableFrames = 12
   /// Normalized corner movement below which two detections count as the same, settled card.
   private let stabilityTolerance: CGFloat = 0.025
   /// Reject quads covering less than this fraction of the frame — usually a distant or partial card.
   private let minimumQuadArea: CGFloat = 0.10
   private let minimumConfidence: VNConfidence = 0.6
+  /// Frames arrive before continuous autofocus has run its first ramp, and during that window
+  /// `isAdjustingFocus` is still false — the lens hasn't started hunting, not finished. Without
+  /// this hold a card already in frame satisfies the stability check outright and gets shot
+  /// through a soft lens.
+  private let focusWarmUp: CFTimeInterval = 0.6
+  /// In, then out. Long enough to register as a deliberate flash, short enough not to delay
+  /// the review sheet.
+  private static let flashInDuration: TimeInterval = 0.06
+  private static let flashOutDuration: TimeInterval = 0.22
 
   private static let ciContext = CIContext()
 
@@ -78,6 +97,7 @@ final class CardScannerViewController: UIViewController {
   override func viewDidLayoutSubviews() {
     super.viewDidLayoutSubviews()
     previewLayer?.frame = view.bounds
+    flashView.frame = view.bounds
   }
 
   override var prefersStatusBarHidden: Bool { true }
@@ -114,6 +134,13 @@ final class CardScannerViewController: UIViewController {
     cancelButton.translatesAutoresizingMaskIntoConstraints = false
     view.addSubview(cancelButton)
 
+    // Added last so it covers the preview, the quad, and the controls — a flash that leaves the
+    // chrome punched out of it reads as a glitch rather than a shutter.
+    flashView.backgroundColor = .white
+    flashView.alpha = 0
+    flashView.isUserInteractionEnabled = false
+    view.addSubview(flashView)
+
     NSLayoutConstraint.activate([
       hintLabel.centerXAnchor.constraint(equalTo: view.centerXAnchor),
       hintLabel.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor, constant: 24),
@@ -126,8 +153,10 @@ final class CardScannerViewController: UIViewController {
 
   private func configureSession() {
     session.beginConfiguration()
-    // .photo gives the full-resolution still that the final crop is taken from; small text on a
-    // business card doesn't survive a 1080p video frame well enough for reliable extraction.
+    // .photo gives the largest 4:3 buffer the video path will deliver, which is what the capture
+    // is now taken from. There is no AVCapturePhotoOutput here on purpose: it plays the system
+    // shutter sound, no public API disables it, and on Japanese and Korean handsets it is
+    // mandatory below the app layer. A video frame makes no sound at all.
     session.sessionPreset = .photo
 
     guard let device = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back),
@@ -138,14 +167,12 @@ final class CardScannerViewController: UIViewController {
       return
     }
     session.addInput(input)
+    captureDevice = device
 
     if session.canAddOutput(videoOutput) {
       videoOutput.alwaysDiscardsLateVideoFrames = true
       videoOutput.setSampleBufferDelegate(self, queue: videoQueue)
       session.addOutput(videoOutput)
-    }
-    if session.canAddOutput(photoOutput) {
-      session.addOutput(photoOutput)
     }
 
     session.commitConfiguration()
@@ -155,6 +182,9 @@ final class CardScannerViewController: UIViewController {
     if (try? device.lockForConfiguration()) != nil {
       if device.isFocusModeSupported(.continuousAutoFocus) {
         device.focusMode = .continuousAutoFocus
+      }
+      if device.isExposureModeSupported(.continuousAutoExposure) {
+        device.exposureMode = .continuousAutoExposure
       }
       device.unlockForConfiguration()
     }
@@ -202,6 +232,18 @@ final class CardScannerViewController: UIViewController {
     }
   }
 
+  /// Blinks the screen white to stand in for the shutter sound. Main queue only.
+  private func playCaptureFlash() {
+    flashView.alpha = 0
+    UIView.animate(withDuration: Self.flashInDuration, delay: 0, options: .curveEaseOut) {
+      self.flashView.alpha = 1
+    } completion: { _ in
+      UIView.animate(withDuration: Self.flashOutDuration, delay: 0, options: .curveEaseIn) {
+        self.flashView.alpha = 0
+      }
+    }
+  }
+
   /// A capture that produced nothing usable shouldn't strand the user on a frozen camera.
   /// The detection flags belong to `videoQueue`, so reset them there rather than from whichever
   /// queue delivered the photo callback.
@@ -231,6 +273,12 @@ extension CardScannerViewController: AVCaptureVideoDataOutputSampleBufferDelegat
       return
     }
 
+    // Timed from the first frame rather than from startRunning(), so the warm-up covers the
+    // window the user is actually looking at the preview.
+    let now = CACurrentMediaTime()
+    let startedAt = streamStartedAt ?? now
+    streamStartedAt = startedAt
+
     let request = VNDetectDocumentSegmentationRequest()
     // The app is portrait-locked and uses the back camera, so buffers arrive rotated a quarter
     // turn from upright.
@@ -256,16 +304,44 @@ extension CardScannerViewController: AVCaptureVideoDataOutputSampleBufferDelegat
     }
     lastQuad = quad
 
+    // A card can sit perfectly still while the lens is still resolving it, and the stability
+    // check alone can't tell those apart — it only ever looked at where the corners are, never
+    // at whether the image behind them is sharp. Hold the count at zero until focus and
+    // exposure have both settled, so "steady" can't mean "steady and blurry".
+    let focusing = now - startedAt < focusWarmUp
+      || captureDevice?.isAdjustingFocus == true
+      || captureDevice?.isAdjustingExposure == true
+    if focusing {
+      stableCount = 0
+    }
+
     let settled = stableCount >= requiredStableFrames
     DispatchQueue.main.async { [weak self] in
       self?.draw(quad)
-      self?.hintLabel.text = settled ? "Capturing…" : "Hold steady"
+      self?.hintLabel.text = focusing ? "Focusing…" : (settled ? "Capturing…" : "Hold steady")
     }
 
-    if settled {
-      hasFired = true
-      let settings = AVCapturePhotoSettings(format: [AVVideoCodecKey: AVVideoCodecType.jpeg])
-      photoOutput.capturePhoto(with: settings, delegate: self)
+    guard settled else { return }
+    hasFired = true
+
+    // Flash first. This is the shutter moment as the user experiences it, and the crop and
+    // encode below take long enough that playing it afterwards would read as lag.
+    let flashEndsAt = DispatchTime.now() + Self.flashInDuration + Self.flashOutDuration
+    DispatchQueue.main.async { [weak self] in self?.playCaptureFlash() }
+
+    // The frame the quad was measured on, so its corners already describe this exact image.
+    // The old path re-detected on a separately captured still, which could disagree with the
+    // outline the user had just been shown.
+    let upright = CIImage(cvPixelBuffer: buffer).oriented(.right)
+    guard let path = Self.write(Self.crop(upright, to: quad)) else {
+      resumeAfterFailedCapture()
+      return
+    }
+
+    // Hand back only once the flash has played out; if the encode already outran it, this
+    // fires immediately.
+    DispatchQueue.main.asyncAfter(deadline: flashEndsAt) { [weak self] in
+      self?.reportOnMain(.captured(path))
     }
   }
 
@@ -314,46 +390,20 @@ extension CardScannerViewController: AVCaptureVideoDataOutputSampleBufferDelegat
 
 // MARK: - Capture and crop
 
-extension CardScannerViewController: AVCapturePhotoCaptureDelegate {
-  func photoOutput(
-    _ output: AVCapturePhotoOutput,
-    didFinishProcessingPhoto photo: AVCapturePhoto,
-    error: Error?
-  ) {
-    guard error == nil,
-          let data = photo.fileDataRepresentation(),
-          let image = UIImage(data: data),
-          let cropped = Self.cropToCard(image),
-          let path = Self.write(cropped) else {
-      resumeAfterFailedCapture()
-      return
-    }
-    report(.captured(path))
-  }
-
-  /// Perspective-corrects the card out of the full still. Detection is re-run here rather than
-  /// reusing the video frame's quad: the still has its own resolution and orientation, and the
-  /// corners have to be in *its* coordinate space to crop correctly.
-  private static func cropToCard(_ image: UIImage) -> CIImage? {
-    guard let base = CIImage(image: image) else { return nil }
-    let oriented = base.oriented(forExifOrientation: image.imageOrientation.exifValue)
-
-    let request = VNDetectDocumentSegmentationRequest()
-    let handler = VNImageRequestHandler(ciImage: oriented, options: [:])
-    try? handler.perform([request])
-
-    guard let quad = request.results?.first else {
-      // Detection can miss on the still even when it held on video. An uncropped card still
-      // extracts fine, so return the full frame rather than throwing the capture away.
-      return oriented
-    }
-
-    let size = oriented.extent.size
+extension CardScannerViewController {
+  /// Perspective-corrects the card out of the frame it was detected in. Vision reports the quad
+  /// normalized against this same image and Core Image shares its bottom-left origin, so the
+  /// corners map straight across with only a scale to apply.
+  private static func crop(_ image: CIImage, to quad: VNRectangleObservation) -> CIImage {
+    let extent = image.extent
     func denormalize(_ point: CGPoint) -> CIVector {
-      CIVector(x: point.x * size.width, y: point.y * size.height)
+      CIVector(
+        x: extent.origin.x + point.x * extent.width,
+        y: extent.origin.y + point.y * extent.height
+      )
     }
 
-    return oriented.applyingFilter("CIPerspectiveCorrection", parameters: [
+    return image.applyingFilter("CIPerspectiveCorrection", parameters: [
       "inputTopLeft": denormalize(quad.topLeft),
       "inputTopRight": denormalize(quad.topRight),
       "inputBottomLeft": denormalize(quad.bottomLeft),
@@ -377,24 +427,6 @@ extension CardScannerViewController: AVCapturePhotoCaptureDelegate {
       return url.absoluteString
     } catch {
       return nil
-    }
-  }
-}
-
-private extension UIImage.Orientation {
-  /// CIImage.oriented(forExifOrientation:) wants the EXIF integer, which doesn't match the
-  /// raw value of UIImage.Orientation.
-  var exifValue: Int32 {
-    switch self {
-    case .up: return 1
-    case .upMirrored: return 2
-    case .down: return 3
-    case .downMirrored: return 4
-    case .leftMirrored: return 5
-    case .right: return 6
-    case .rightMirrored: return 7
-    case .left: return 8
-    @unknown default: return 1
     }
   }
 }
