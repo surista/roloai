@@ -333,7 +333,7 @@ extension CardScannerViewController: AVCaptureVideoDataOutputSampleBufferDelegat
     // The old path re-detected on a separately captured still, which could disagree with the
     // outline the user had just been shown.
     let upright = CIImage(cvPixelBuffer: buffer).oriented(.right)
-    guard let path = Self.write(Self.crop(upright, to: quad)) else {
+    guard let path = Self.write(Self.uprightCard(Self.crop(upright, to: quad))) else {
       resumeAfterFailedCapture()
       return
     }
@@ -409,6 +409,39 @@ extension CardScannerViewController {
       "inputBottomLeft": denormalize(quad.bottomLeft),
       "inputBottomRight": denormalize(quad.bottomRight)
     ])
+  }
+
+  /// Turns a card that was photographed side-on back into a landscape one.
+  ///
+  /// The quad is named for where its corners sit in the *frame*, not on the card, so a card laid
+  /// sideways under a portrait-held phone is cropped to a portrait image with its text running
+  /// bottom-to-top. Business cards are wider than they are tall, so a portrait crop is a reliable
+  /// signal that this happened — but it says nothing about which of the two quarter turns puts
+  /// the text the right way up, so ask Vision which one it can actually read.
+  ///
+  /// The margin keeps near-square crops alone, where the shape isn't evidence of anything.
+  private static func uprightCard(_ image: CIImage) -> CIImage {
+    guard image.extent.height > image.extent.width * 1.15 else { return image }
+    let clockwise = image.oriented(.right)
+    let counterClockwise = image.oriented(.left)
+    // A card with no text Vision can read scores zero both ways and keeps the clockwise turn:
+    // right shape, possibly upside down, which still beats leaving it on its side.
+    return legibility(of: counterClockwise) > legibility(of: clockwise) ? counterClockwise : clockwise
+  }
+
+  /// Summed confidence of whatever text Vision picks out. Only ever compared against the same
+  /// image at the opposite rotation, so the absolute number means nothing on its own.
+  private static func legibility(of image: CIImage) -> Float {
+    let request = VNRecognizeTextRequest()
+    // Fast beats accurate here: this only has to tell upside-down from right-way-up, and it runs
+    // between the shutter flash and the review sheet.
+    request.recognitionLevel = .fast
+    request.usesLanguageCorrection = false
+    let handler = VNImageRequestHandler(ciImage: image, options: [:])
+    try? handler.perform([request])
+    return (request.results ?? []).reduce(into: Float(0)) { total, observation in
+      total += observation.topCandidates(1).first?.confidence ?? 0
+    }
   }
 
   private static func write(_ image: CIImage) -> String? {

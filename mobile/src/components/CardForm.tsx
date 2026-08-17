@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   View,
   Text,
@@ -26,6 +26,42 @@ function splitToList(value: string): string[] {
     .split(',')
     .map((v) => v.trim())
     .filter(Boolean);
+}
+
+/** Roughly a business card on its side (91×55mm), used until the real dimensions load. */
+const CARD_ASPECT = 91 / 55;
+
+/**
+ * The photo's own width/height, so the preview box can take the shape of the card instead of
+ * cropping it to fit a fixed one.
+ *
+ * A scanned card is perspective-corrected to whatever rectangle was detected, so its proportions
+ * aren't known ahead of time — and a landscape card in a letterbox-shaped box loses its top and
+ * bottom edges, which is where company names and job titles usually sit. `Image.getSize` reads
+ * the header only, so this costs nothing next to rendering the image itself.
+ */
+function useImageAspect(uri?: string): number {
+  const [aspect, setAspect] = useState(CARD_ASPECT);
+
+  useEffect(() => {
+    if (!uri) return;
+    let cancelled = false;
+    setAspect(CARD_ASPECT);
+    Image.getSize(
+      uri,
+      (width, height) => {
+        if (!cancelled && height > 0) setAspect(width / height);
+      },
+      // Leaving the fallback in place is enough: the image is drawn with resizeMode="contain",
+      // so a wrong box shape letterboxes rather than crops.
+      () => {}
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [uri]);
+
+  return aspect;
 }
 
 export type CardFormFields = Omit<
@@ -72,6 +108,8 @@ export default function CardForm({
   const [viewerIndex, setViewerIndex] = useState<number | null>(null);
   const [retakingSide, setRetakingSide] = useState<'front' | 'back' | null>(null);
   const { scan, reviewModal } = useScanWithReview();
+  const frontAspect = useImageAspect(imageUri);
+  const backAspect = useImageAspect(backImageUri);
 
   const viewerImages = [
     imageUri && { uri: imageUri, label: 'Front' },
@@ -158,7 +196,11 @@ export default function CardForm({
               hitSlop={undefined}
               accessibilityLabel="View front photo full screen"
             >
-              <Image source={{ uri: imageUri }} style={styles.preview} />
+              <Image
+                source={{ uri: imageUri }}
+                style={[styles.preview, { aspectRatio: frontAspect }]}
+                resizeMode="contain"
+              />
             </Button>
           ) : (
             <View style={[styles.preview, styles.previewEmpty]}>
@@ -192,7 +234,11 @@ export default function CardForm({
               hitSlop={undefined}
               accessibilityLabel="View back photo full screen"
             >
-              <Image source={{ uri: backImageUri }} style={styles.preview} />
+              <Image
+                source={{ uri: backImageUri }}
+                style={[styles.preview, { aspectRatio: backAspect }]}
+                resizeMode="contain"
+              />
             </Button>
           ) : (
             <View style={[styles.preview, styles.previewEmpty]}>
@@ -303,8 +349,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 4,
   },
-  preview: { width: '100%', height: 180, borderRadius: 10, backgroundColor: '#eee' },
-  previewEmpty: { alignItems: 'center', justifyContent: 'center' },
+  // Height comes from the photo's own aspect ratio rather than a fixed value, capped so a card
+  // shot in portrait can't push the form fields off the screen.
+  preview: { width: '100%', maxHeight: 280, borderRadius: 10, backgroundColor: '#eee' },
+  previewEmpty: { height: 180, alignItems: 'center', justifyContent: 'center' },
   previewEmptyText: { color: '#999', fontSize: 14 },
   retakeText: { color: '#0a7cff', fontWeight: '600', fontSize: 14 },
   field: { marginBottom: 14 },
