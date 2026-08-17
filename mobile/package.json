@@ -1,6 +1,6 @@
 {
   "name": "mobile",
-  "version": "1.01.15",
+  "version": "1.01.16",
   "main": "index.ts",
   "dependencies": {
     "@firebase/auth": "^1.13.3",
