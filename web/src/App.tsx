@@ -3,6 +3,7 @@ import { AuthProvider, useAuth } from './lib/AuthContext';
 import LoginPage from './pages/LoginPage';
 import CardListPage from './pages/CardListPage';
 import CardDetailPage from './pages/CardDetailPage';
+import SettingsPage from './pages/SettingsPage';
 
 function AuthGate() {
   const { user, initializing } = useAuth();
@@ -14,6 +15,7 @@ function AuthGate() {
     <Routes>
       <Route path="/" element={<CardListPage />} />
       <Route path="/cards/:cardId" element={<CardDetailPage />} />
+      <Route path="/settings" element={<SettingsPage />} />
     </Routes>
   );
 }

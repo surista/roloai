@@ -149,3 +149,5 @@ export function passwordResetError(error: unknown): string | null {
       return null;
   }
 }
+
+export { cardToVCard, cardsToVCard, parseVCards } from './vcard';
