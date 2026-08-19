@@ -342,3 +342,8 @@ button {
   color: inherit;
   font-size: 15px;
 }
+
+.settings-value {
+  font-size: 16px;
+  margin: 4px 0;
+}

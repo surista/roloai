@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { cardsToVCard, parseVCards, type Card, type CardDraft } from '@roloai/shared';
 import { importCards, restoreCards, subscribeToCards } from '../lib/cards';
+import { useAuth } from '../lib/AuthContext';
 import {
   BackupFormatError,
   backupFileName,
@@ -22,6 +23,7 @@ type Pending =
   | { kind: 'vcard'; fileName: string; drafts: CardDraft[] };
 
 export default function SettingsPage() {
+  const { user, logout } = useAuth();
   const [cards, setCards] = useState<Card[]>([]);
   const [pending, setPending] = useState<Pending | null>(null);
   const [busy, setBusy] = useState(false);
@@ -104,6 +106,20 @@ export default function SettingsPage() {
       </header>
 
       <section className="settings-section">
+        <h2>Account</h2>
+        <p className="settings-value">{user?.email ?? 'Not signed in'}</p>
+        <p className="settings-hint">
+          This is the account that owns every card. Cards are stored against it, so signing in as
+          anyone else shows an empty library rather than this one.
+        </p>
+        <div className="settings-actions">
+          <button className="link-button destructive" onClick={() => void logout()}>
+            Sign out
+          </button>
+        </div>
+      </section>
+
+      <section className="settings-section">
         <h2>Export</h2>
         <p className="settings-hint">
           {cards.length} {cards.length === 1 ? 'card' : 'cards'}. Exports carry links to the card
@@ -171,6 +187,11 @@ export default function SettingsPage() {
             </div>
           </div>
         )}
+      </section>
+
+      <section className="settings-section">
+        <h2>About</h2>
+        <p className="settings-value">RoloAI v{__APP_VERSION__}</p>
       </section>
 
       {error && <p className="error">{error}</p>}

@@ -6,7 +6,6 @@ import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { CARD_SORT_OPTIONS, sortCards, type Card, type CardSort } from '@roloai/shared';
 import type { RootStackParamList } from '../navigation/types';
 import { subscribeToCards } from '../lib/cards';
-import { useAuth } from '../lib/AuthContext';
 import { APP_VERSION } from '../lib/version';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'CardList'>;
@@ -14,7 +13,6 @@ type Props = NativeStackScreenProps<RootStackParamList, 'CardList'>;
 const CHIP_HIT_SLOP = { top: 7, bottom: 7, left: 0, right: 0 } as const;
 
 export default function CardListScreen({ navigation }: Props) {
-  const { logout } = useAuth();
   const insets = useSafeAreaInsets();
   const [cards, setCards] = useState<Card[]>([]);
   const [search, setSearch] = useState('');
@@ -45,8 +43,13 @@ export default function CardListScreen({ navigation }: Props) {
           onChangeText={setSearch}
         />
         <View style={styles.headerActions}>
-          <Button onPress={logout} accessibilityLabel="Sign out">
-            <Text style={styles.logout}>Sign out</Text>
+          {/* Sign out moved into Settings: it sat one stray tap from the search field, and the
+              account it signs out of was never named anywhere in the app. */}
+          <Button
+            onPress={() => navigation.navigate('Settings')}
+            accessibilityLabel="Settings"
+          >
+            <Text style={styles.settingsLink}>Settings</Text>
           </Button>
           <Text style={styles.version}>v{APP_VERSION}</Text>
         </View>
@@ -139,7 +142,7 @@ const styles = StyleSheet.create({
     padding: 10,
   },
   headerActions: { alignItems: 'flex-end', gap: 2 },
-  logout: { color: '#c00' },
+  settingsLink: { color: '#0a7cff', fontWeight: '600' },
   version: { color: '#888', fontSize: 11 },
   sortRow: { paddingHorizontal: 16, gap: 8, alignItems: 'center' },
   sortChip: {

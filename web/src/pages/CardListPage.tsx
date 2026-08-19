@@ -2,10 +2,8 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { CARD_SORT_OPTIONS, sortCards, type Card, type CardSort } from '@roloai/shared';
 import { subscribeToCards } from '../lib/cards';
-import { useAuth } from '../lib/AuthContext';
 
 export default function CardListPage() {
-  const { logout } = useAuth();
   const [cards, setCards] = useState<Card[]>([]);
   const [search, setSearch] = useState('');
   const [activeTag, setActiveTag] = useState<string | null>(null);
@@ -41,9 +39,6 @@ export default function CardListPage() {
           <Link className="link-button" to="/settings">
             Settings
           </Link>
-          <button className="link-button" onClick={logout}>
-            Sign out
-          </button>
         </div>
       </header>
 

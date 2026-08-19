@@ -11,6 +11,7 @@ import CardListScreen from './src/screens/CardListScreen';
 import ScanScreen from './src/screens/ScanScreen';
 import ReviewEditScreen from './src/screens/ReviewEditScreen';
 import CardDetailScreen from './src/screens/CardDetailScreen';
+import SettingsScreen from './src/screens/SettingsScreen';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
@@ -36,6 +37,7 @@ function AppNavigator() {
         <Stack.Screen name="Scan" component={ScanScreen} options={{ title: 'Scan Card', headerShown: false }} />
         <Stack.Screen name="ReviewEdit" component={ReviewEditScreen} options={{ title: 'Review Card' }} />
         <Stack.Screen name="CardDetail" component={CardDetailScreen} options={{ title: 'Card Details' }} />
+        <Stack.Screen name="Settings" component={SettingsScreen} options={{ title: 'Settings' }} />
       </Stack.Navigator>
     </NavigationContainer>
   );
