@@ -1,9 +1,9 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { View, Text, TextInput, FlatList, Image, StyleSheet } from 'react-native';
+import { View, Text, TextInput, FlatList, Image, ScrollView, StyleSheet } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Button from '../components/Button';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
-import type { Card } from '@roloai/shared';
+import { CARD_SORT_OPTIONS, sortCards, type Card, type CardSort } from '@roloai/shared';
 import type { RootStackParamList } from '../navigation/types';
 import { subscribeToCards } from '../lib/cards';
 import { useAuth } from '../lib/AuthContext';
@@ -11,23 +11,29 @@ import { APP_VERSION } from '../lib/version';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'CardList'>;
 
+const CHIP_HIT_SLOP = { top: 7, bottom: 7, left: 0, right: 0 } as const;
+
 export default function CardListScreen({ navigation }: Props) {
   const { logout } = useAuth();
   const insets = useSafeAreaInsets();
   const [cards, setCards] = useState<Card[]>([]);
   const [search, setSearch] = useState('');
+  const [sort, setSort] = useState<CardSort>('recent');
 
   useEffect(() => subscribeToCards(setCards), []);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    if (!q) return cards;
-    return cards.filter((c) =>
-      [c.firstName, c.lastName, c.company, c.jobTitle, ...c.tags]
-        .filter(Boolean)
-        .some((field) => field!.toLowerCase().includes(q))
-    );
-  }, [cards, search]);
+    const matches = q
+      ? cards.filter((c) =>
+          [c.firstName, c.lastName, c.company, c.jobTitle, ...c.tags]
+            .filter(Boolean)
+            .some((field) => field!.toLowerCase().includes(q))
+        )
+      : cards;
+    // Sorting after filtering, so the comparator only runs over what is on screen.
+    return sortCards(matches, sort);
+  }, [cards, search, sort]);
 
   return (
     <View style={styles.container}>
@@ -45,6 +51,32 @@ export default function CardListScreen({ navigation }: Props) {
           <Text style={styles.version}>v{APP_VERSION}</Text>
         </View>
       </View>
+
+      {/* Horizontal rather than wrapped: four chips fit one line on every iPhone, and a row that
+          reflows to two lines would shift the list down as the labels change. */}
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={styles.sortRow}
+        keyboardShouldPersistTaps="handled"
+      >
+        {CARD_SORT_OPTIONS.map((option) => (
+          <Button
+            key={option.value}
+            style={[styles.sortChip, sort === option.value && styles.sortChipActive]}
+            // Vertical only: the chip is ~30pt tall, so this brings it to the 44pt minimum
+            // without widening it into the neighbour it sits 8pt away from.
+            hitSlop={CHIP_HIT_SLOP}
+            accessibilityState={{ selected: sort === option.value }}
+            accessibilityLabel={`Sort by ${option.label}`}
+            onPress={() => setSort(option.value)}
+          >
+            <Text style={sort === option.value ? styles.sortTextActive : styles.sortText}>
+              {option.label}
+            </Text>
+          </Button>
+        ))}
+      </ScrollView>
 
       <FlatList
         data={filtered}
@@ -109,7 +141,18 @@ const styles = StyleSheet.create({
   headerActions: { alignItems: 'flex-end', gap: 2 },
   logout: { color: '#c00' },
   version: { color: '#888', fontSize: 11 },
-  list: { paddingHorizontal: 16 },
+  sortRow: { paddingHorizontal: 16, gap: 8, alignItems: 'center' },
+  sortChip: {
+    borderWidth: 1,
+    borderColor: '#ccc',
+    borderRadius: 999,
+    paddingVertical: 6,
+    paddingHorizontal: 14,
+  },
+  sortChipActive: { backgroundColor: '#111', borderColor: '#111' },
+  sortText: { fontSize: 13, color: '#333' },
+  sortTextActive: { fontSize: 13, color: '#fff', fontWeight: '600' },
+  list: { paddingHorizontal: 16, paddingTop: 12 },
   empty: { textAlign: 'center', color: '#888', marginTop: 40 },
   row: {
     flexDirection: 'row',

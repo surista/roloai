@@ -318,3 +318,27 @@ button {
   font-size: 14px;
   line-height: 1.5;
 }
+
+.filter-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+
+.sort-control {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: light-dark(#666, #999);
+  font-size: 14px;
+}
+
+.sort-control select {
+  padding: 9px 10px;
+  border-radius: 8px;
+  border: 1px solid light-dark(#ccc, #444);
+  background: light-dark(#fff, #1c1c1e);
+  color: inherit;
+  font-size: 15px;
+}

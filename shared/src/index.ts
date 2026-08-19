@@ -150,4 +150,57 @@ export function passwordResetError(error: unknown): string | null {
   }
 }
 
+export type CardSort = 'recent' | 'firstName' | 'lastName' | 'company';
+
+export const CARD_SORT_OPTIONS: { value: CardSort; label: string }[] = [
+  { value: 'recent', label: 'Recently added' },
+  { value: 'firstName', label: 'First name' },
+  { value: 'lastName', label: 'Last name' },
+  { value: 'company', label: 'Company' },
+];
+
+/**
+ * Compares two optional text fields for sorting.
+ *
+ * Blank sorts last in every case: a card with no company belongs at the bottom of a
+ * company-ordered list, not the top, and `''` would otherwise win every comparison.
+ * `sensitivity: 'base'` puts "acme" and "Acme" together rather than in separate case runs, and
+ * localeCompare (not `<`) is what orders accented and non-Latin names the way a reader expects
+ * — `'Ø' < 'A'` is true by code point and wrong by every other measure.
+ */
+function compareText(a: string | undefined, b: string | undefined): number {
+  const left = (a ?? '').trim();
+  const right = (b ?? '').trim();
+  if (!left || !right) return left ? -1 : right ? 1 : 0;
+  return left.localeCompare(right, undefined, { sensitivity: 'base', numeric: true });
+}
+
+/**
+ * The fields each sort compares, in order. The trailing entries are tie-breakers: two people
+ * with the same first name order by surname rather than by whatever order Firestore happened to
+ * return them in, which would otherwise shuffle on every snapshot.
+ */
+const SORT_FIELDS: Record<Exclude<CardSort, 'recent'>, (card: Card) => (string | undefined)[]> = {
+  firstName: (card) => [card.firstName, card.lastName, card.company],
+  lastName: (card) => [card.lastName, card.firstName, card.company],
+  company: (card) => [card.company, card.lastName, card.firstName],
+};
+
+/** Sorts a card list. `recent` is returned untouched — the Firestore query already orders by createdAt desc. */
+export function sortCards(cards: Card[], sort: CardSort): Card[] {
+  if (sort === 'recent') return cards;
+  const fieldsOf = SORT_FIELDS[sort];
+  return [...cards].sort((a, b) => {
+    const left = fieldsOf(a);
+    const right = fieldsOf(b);
+    for (let i = 0; i < left.length; i++) {
+      const result = compareText(left[i], right[i]);
+      if (result !== 0) return result;
+    }
+    // Everything compared equal, so fall back to the default order rather than leaving it to
+    // sort stability across two different engines.
+    return b.createdAt - a.createdAt;
+  });
+}
+
 export { cardToVCard, cardsToVCard, parseVCards } from './vcard';

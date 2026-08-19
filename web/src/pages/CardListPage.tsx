@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import type { Card } from '@roloai/shared';
+import { CARD_SORT_OPTIONS, sortCards, type Card, type CardSort } from '@roloai/shared';
 import { subscribeToCards } from '../lib/cards';
 import { useAuth } from '../lib/AuthContext';
 
@@ -9,6 +9,7 @@ export default function CardListPage() {
   const [cards, setCards] = useState<Card[]>([]);
   const [search, setSearch] = useState('');
   const [activeTag, setActiveTag] = useState<string | null>(null);
+  const [sort, setSort] = useState<CardSort>('recent');
 
   useEffect(() => subscribeToCards(setCards), []);
 
@@ -20,14 +21,16 @@ export default function CardListPage() {
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return cards.filter((c) => {
+    const matches = cards.filter((c) => {
       if (activeTag && !c.tags.includes(activeTag)) return false;
       if (!q) return true;
       return [c.firstName, c.lastName, c.company, c.jobTitle, ...c.tags]
         .filter(Boolean)
         .some((field) => field!.toLowerCase().includes(q));
     });
-  }, [cards, search, activeTag]);
+    // Sorting after filtering, so the comparator only runs over what is on screen.
+    return sortCards(matches, sort);
+  }, [cards, search, activeTag, sort]);
 
   return (
     <div className="card-list-page">
@@ -45,12 +48,24 @@ export default function CardListPage() {
       </header>
 
       <div className="filters">
-        <input
-          className="search-input"
-          placeholder="Search name, company, tag…"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-        />
+        <div className="filter-row">
+          <input
+            className="search-input"
+            placeholder="Search name, company, tag…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+          <label className="sort-control">
+            Sort by
+            <select value={sort} onChange={(e) => setSort(e.target.value as CardSort)}>
+              {CARD_SORT_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
         {allTags.length > 0 && (
           <div className="tag-filters">
             <button

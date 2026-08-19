@@ -25,15 +25,24 @@ interface Props extends Omit<PressableProps, 'style'> {
   disabledStyle?: StyleProp<ViewStyle>;
 }
 
-export default function Button({
-  style,
-  pressedStyle,
-  disabledStyle,
-  disabled,
-  hitSlop = HIT_SLOP,
-  accessibilityRole = 'button',
-  ...rest
-}: Props) {
+export default function Button(props: Props) {
+  const {
+    style,
+    pressedStyle,
+    disabledStyle,
+    disabled,
+    hitSlop: hitSlopProp,
+    accessibilityRole = 'button',
+    ...rest
+  } = props;
+
+  // `hitSlop = HIT_SLOP` as a default parameter also fires for an explicit `hitSlop={undefined}`,
+  // which is how call sites opt out — and they opt out for a reason. Two adjacent controls that
+  // are already tall enough (list rows, sort chips) each grow by 12pt, their touch regions
+  // overlap, and a tap near the boundary lands on the wrong one. `in` tells "not passed" and
+  // "passed undefined" apart; a default parameter cannot.
+  const hitSlop = 'hitSlop' in props ? hitSlopProp : HIT_SLOP;
+
   return (
     <Pressable
       {...rest}
