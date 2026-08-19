@@ -411,22 +411,28 @@ extension CardScannerViewController {
     ])
   }
 
-  /// Turns a card that was photographed side-on back into a landscape one.
+  /// Turns a crop the right way up.
   ///
-  /// The quad is named for where its corners sit in the *frame*, not on the card, so a card laid
-  /// sideways under a portrait-held phone is cropped to a portrait image with its text running
-  /// bottom-to-top. Business cards are wider than they are tall, so a portrait crop is a reliable
-  /// signal that this happened — but it says nothing about which of the two quarter turns puts
-  /// the text the right way up, so ask Vision which one it can actually read.
+  /// The quad is named for where its corners sit in the *frame*, not on the card, so the crop
+  /// inherits whatever orientation the card happened to have under the lens. Shape narrows that
+  /// to two candidates and Vision picks between them by which one it can actually read.
   ///
-  /// The margin keeps near-square crops alone, where the shape isn't evidence of anything.
+  /// Both branches matter. A portrait crop means a landscape card was photographed side-on, and
+  /// the question is which quarter turn rights it. A landscape crop used to be returned
+  /// unchanged on the assumption it was already upright — but a card laid top-away from the
+  /// phone crops landscape and *upside down*, which is how upside-down cards were reaching the
+  /// review sheet with nothing in the pipeline looking for it.
+  ///
+  /// Only two orientations are tested, not four: shape rules the other two out before Vision is
+  /// asked, and each test is an OCR pass between the shutter flash and the review sheet.
   private static func uprightCard(_ image: CIImage) -> CIImage {
-    guard image.extent.height > image.extent.width * 1.15 else { return image }
-    let clockwise = image.oriented(.right)
-    let counterClockwise = image.oriented(.left)
-    // A card with no text Vision can read scores zero both ways and keeps the clockwise turn:
-    // right shape, possibly upside down, which still beats leaving it on its side.
-    return legibility(of: counterClockwise) > legibility(of: clockwise) ? counterClockwise : clockwise
+    // The margin keeps near-square crops out of the side-on branch, where shape proves nothing.
+    let candidates = image.extent.height > image.extent.width * 1.15
+      ? [image.oriented(.right), image.oriented(.left)]
+      : [image, image.oriented(.down)]
+    // A card with no text Vision can read scores zero both ways and keeps the first candidate,
+    // which is the better guess from shape alone.
+    return legibility(of: candidates[1]) > legibility(of: candidates[0]) ? candidates[1] : candidates[0]
   }
 
   /// Summed confidence of whatever text Vision picks out. Only ever compared against the same

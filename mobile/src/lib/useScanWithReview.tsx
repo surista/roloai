@@ -1,9 +1,9 @@
 import React, { useCallback, useRef, useState } from 'react';
-import { Modal, View, Image, Text, StyleSheet } from 'react-native';
+import { Modal, View, Image, Text, ActivityIndicator, StyleSheet } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Button from '../components/Button';
-import { scanCardEdge, type CardScanResult } from './documentScanner';
+import { rotateImage, scanCardEdge, type CardScanResult } from './documentScanner';
 
 /**
  * Wraps scanCardEdge() with a confirmation step: the scanner auto-captures a single shot and
@@ -20,13 +20,27 @@ export function useScanWithReview() {
   const insets = useSafeAreaInsets();
   const [pendingUri, setPendingUri] = useState<string | null>(null);
   const [label, setLabel] = useState<string | undefined>(undefined);
+  const [rotating, setRotating] = useState(false);
   const resolverRef = useRef<((result: CardScanResult) => void) | null>(null);
+  // The untouched capture, kept so each rotation re-renders from it rather than from the last
+  // rotation — see rotateImage. `rotation` is the total turn currently applied to it.
+  const originalUriRef = useRef<string | null>(null);
+  const rotationRef = useRef(0);
+
+  /** A freshly captured shot replaces whatever was under review, rotation and all. */
+  const showCapture = (uri: string) => {
+    originalUriRef.current = uri;
+    rotationRef.current = 0;
+    setPendingUri(uri);
+  };
 
   const settle = (result: CardScanResult) => {
     resolverRef.current?.(result);
     resolverRef.current = null;
     setPendingUri(null);
     setLabel(undefined);
+    originalUriRef.current = null;
+    rotationRef.current = 0;
   };
 
   const scan = useCallback((scanLabel?: string): Promise<CardScanResult> => {
@@ -47,7 +61,7 @@ export function useScanWithReview() {
             resolve(result);
             return;
           }
-          setPendingUri(result.uri);
+          showCapture(result.uri);
         });
     });
   }, []);
@@ -56,12 +70,39 @@ export function useScanWithReview() {
     try {
       const result = await scanCardEdge();
       if (result.status === 'ok') {
-        setPendingUri(result.uri);
+        showCapture(result.uri);
       }
       // Anything else (including a cancel) leaves the review open on the existing photo rather
       // than losing it — the user still has Accept and Cancel to choose from.
     } catch (e) {
       console.error('Card scanner failed:', e);
+    }
+  };
+
+  /**
+   * Turns the shot a quarter turn clockwise.
+   *
+   * The scanner reads the card's orientation off the crop's shape and what Vision can make out,
+   * which is right nearly always and wrong on a card it cannot read — a logo-only back, or one
+   * photographed at an angle that makes both turns equally legible. This is the way out of that
+   * without recapturing and hoping.
+   */
+  const handleRotate = async () => {
+    const source = originalUriRef.current;
+    if (!source || rotating) return;
+    const next = (rotationRef.current + 90) % 360;
+    setRotating(true);
+    try {
+      // Back at 0 the original file is the answer, and re-rendering it would only lose quality.
+      const uri = next === 0 ? source : await rotateImage(source, next);
+      rotationRef.current = next;
+      setPendingUri(uri);
+    } catch (e) {
+      // The shot on screen is still perfectly usable, so this is worth reporting quietly rather
+      // than tearing down a review the user may be about to accept.
+      console.error('Could not rotate the capture:', e);
+    } finally {
+      setRotating(false);
     }
   };
 
@@ -83,6 +124,13 @@ export function useScanWithReview() {
         <StatusBar style="light" />
         {label && <Text style={styles.label}>{label}</Text>}
         <Image source={{ uri: pendingUri }} style={styles.preview} resizeMode="contain" />
+        <Button style={styles.rotateButton} onPress={handleRotate} disabled={rotating}>
+          {rotating ? (
+            <ActivityIndicator size="small" color="#fff" />
+          ) : (
+            <Text style={styles.rotateButtonText}>Rotate 90°</Text>
+          )}
+        </Button>
         <View style={styles.buttonRow}>
           <Button style={styles.cancelButton} onPress={() => settle({ status: 'cancelled' })}>
             <Text style={styles.cancelButtonText}>Cancel</Text>
@@ -113,10 +161,23 @@ const styles = StyleSheet.create({
   },
   label: { color: '#fff', fontSize: 16, fontWeight: '600', marginBottom: 16 },
   preview: { width: '100%', height: '65%', borderRadius: 10, backgroundColor: '#111' },
+  // Its own row rather than a fourth button alongside Cancel/Retake/Accept: those three are the
+  // outcomes, this changes the thing being decided on, and four across is cramped on an SE.
+  rotateButton: {
+    marginTop: 20,
+    paddingVertical: 10,
+    paddingHorizontal: 20,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#555',
+    minWidth: 130,
+    alignItems: 'center',
+  },
+  rotateButtonText: { color: '#fff', fontWeight: '600', fontSize: 15 },
   buttonRow: {
     flexDirection: 'row',
     gap: 12,
-    marginTop: 28,
+    marginTop: 20,
     paddingHorizontal: 20,
     alignSelf: 'stretch',
   },

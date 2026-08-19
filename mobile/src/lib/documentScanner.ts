@@ -56,6 +56,21 @@ export async function renderForUpload(uri: string): Promise<string> {
 }
 
 /**
+ * Rotates a local image clockwise by `degrees`, returning the new file.
+ *
+ * Callers pass the total rotation from the original capture rather than turning the previous
+ * result again: every rotation is a fresh JPEG encode, and four taps around the compass would
+ * otherwise be four generations of loss on a photo the whole app exists to read.
+ */
+export async function rotateImage(uri: string, degrees: number): Promise<string> {
+  const context = ImageManipulator.manipulate(uri);
+  context.rotate(degrees);
+  const rendered = await context.renderAsync();
+  const result = await rendered.saveAsync({ format: SaveFormat.JPEG, compress: UPLOAD_QUALITY });
+  return result.uri;
+}
+
+/**
  * Writes a small copy of the image for list views and returns its local uri.
  *
  * 400px wide covers a 48pt row thumb on the densest iPhone and the web grid's 220px tile with
