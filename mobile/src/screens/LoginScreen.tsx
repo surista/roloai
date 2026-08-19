@@ -8,20 +8,29 @@ import {
   KeyboardAvoidingView,
   ScrollView,
 } from 'react-native';
+import {
+  PASSWORD_RESET_NEEDS_EMAIL,
+  PASSWORD_RESET_SENT,
+  passwordResetError,
+} from '@roloai/shared';
 import Button from '../components/Button';
 import { useAuth } from '../lib/AuthContext';
+import { APP_VERSION } from '../lib/version';
 
 export default function LoginScreen() {
-  const { login } = useAuth();
+  const { login, resetPassword } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [resetting, setResetting] = useState(false);
   const passwordRef = useRef<TextInput>(null);
 
   const handleLogin = async () => {
     if (loading) return;
     setError(null);
+    setNotice(null);
     setLoading(true);
     try {
       await login(email.trim(), password);
@@ -29,6 +38,28 @@ export default function LoginScreen() {
       setError('Could not sign in. Check your email and password.');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleForgotPassword = async () => {
+    if (resetting) return;
+    const address = email.trim();
+    setError(null);
+    setNotice(null);
+    if (!address) {
+      setError(PASSWORD_RESET_NEEDS_EMAIL);
+      return;
+    }
+    setResetting(true);
+    try {
+      await resetPassword(address);
+      setNotice(PASSWORD_RESET_SENT);
+    } catch (e) {
+      const message = passwordResetError(e);
+      if (message) setError(message);
+      else setNotice(PASSWORD_RESET_SENT);
+    } finally {
+      setResetting(false);
     }
   };
 
@@ -70,6 +101,7 @@ export default function LoginScreen() {
           onChangeText={setPassword}
         />
         {error && <Text style={styles.error}>{error}</Text>}
+        {notice && <Text style={styles.notice}>{notice}</Text>}
         <Button
           style={styles.button}
           onPress={handleLogin}
@@ -79,6 +111,18 @@ export default function LoginScreen() {
         >
           {loading ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>Sign In</Text>}
         </Button>
+        <Button
+          style={styles.linkButton}
+          onPress={handleForgotPassword}
+          disabled={resetting}
+          accessibilityLabel="Forgot password"
+          accessibilityState={{ busy: resetting }}
+        >
+          <Text style={styles.linkButtonText}>
+            {resetting ? 'Sending…' : 'Forgot password?'}
+          </Text>
+        </Button>
+        <Text style={styles.version}>v{APP_VERSION}</Text>
       </ScrollView>
     </KeyboardAvoidingView>
   );
@@ -103,5 +147,9 @@ const styles = StyleSheet.create({
     marginTop: 8,
   },
   buttonText: { color: '#fff', fontWeight: '600', fontSize: 16 },
+  linkButton: { alignSelf: 'center', paddingVertical: 8, paddingHorizontal: 12 },
+  linkButtonText: { color: '#0a7cff', fontWeight: '600', fontSize: 15 },
   error: { color: '#c00', textAlign: 'center' },
+  notice: { color: '#1a7f37', textAlign: 'center' },
+  version: { color: '#888', fontSize: 12, textAlign: 'center', marginTop: 8 },
 });

@@ -117,3 +117,35 @@ export function cardFromFirestore(id: string, data: Record<string, unknown>): Ca
   const updatedAt = toMillis(data.updatedAt) ?? createdAt;
   return { ...data, id, createdAt, updatedAt } as Card;
 }
+
+/**
+ * Firebase deliberately refuses to reveal whether an address has an account: with email
+ * enumeration protection on, a reset request for an unknown address resolves exactly as a real
+ * one does. Both apps therefore say the same thing either way, and only report a failure when it
+ * is about the address the user typed or about reaching Firebase at all — anything else
+ * (`auth/user-not-found` above all) has to stay indistinguishable from success.
+ */
+export const PASSWORD_RESET_SENT =
+  'If that address has an account, a reset link is on its way. Check your inbox.';
+
+export const PASSWORD_RESET_NEEDS_EMAIL =
+  'Enter your email address first, then use Forgot password.';
+
+/** The message to show for a failed reset, or `null` when it should read as sent. */
+export function passwordResetError(error: unknown): string | null {
+  const code =
+    typeof error === 'object' && error !== null && 'code' in error
+      ? String((error as { code: unknown }).code)
+      : '';
+  switch (code) {
+    case 'auth/invalid-email':
+    case 'auth/missing-email':
+      return "That doesn't look like a valid email address.";
+    case 'auth/too-many-requests':
+      return 'Too many attempts. Wait a minute, then try again.';
+    case 'auth/network-request-failed':
+      return 'Could not reach the server. Check your connection and try again.';
+    default:
+      return null;
+  }
+}

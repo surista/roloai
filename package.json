@@ -1,7 +1,7 @@
 {
   "name": "roloai",
   "private": true,
-  "version": "1.01.16",
+  "version": "1.02.02",
   "workspaces": [
     "shared",
     "web",

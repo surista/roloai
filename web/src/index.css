@@ -58,11 +58,34 @@ button {
   font-size: 14px;
 }
 
+.notice {
+  color: light-dark(#1a7f37, #4ac26b);
+  font-size: 14px;
+}
+
+.login-form .link-button {
+  align-self: center;
+  margin-top: 4px;
+}
+
 .page-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
   padding: 20px 24px 0;
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.version {
+  color: light-dark(#888, #777);
+  font-size: 12px;
+  text-align: center;
+  margin: 0;
 }
 
 .link-button {

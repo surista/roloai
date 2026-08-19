@@ -33,9 +33,12 @@ export default function CardListPage() {
     <div className="card-list-page">
       <header className="page-header">
         <h1>RoloAI</h1>
-        <button className="link-button" onClick={logout}>
-          Sign out
-        </button>
+        <div className="header-actions">
+          <span className="version">v{__APP_VERSION__}</span>
+          <button className="link-button" onClick={logout}>
+            Sign out
+          </button>
+        </div>
       </header>
 
       <div className="filters">

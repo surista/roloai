@@ -7,6 +7,7 @@ import type { Card } from '@roloai/shared';
 import type { RootStackParamList } from '../navigation/types';
 import { subscribeToCards } from '../lib/cards';
 import { useAuth } from '../lib/AuthContext';
+import { APP_VERSION } from '../lib/version';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'CardList'>;
 
@@ -37,9 +38,12 @@ export default function CardListScreen({ navigation }: Props) {
           value={search}
           onChangeText={setSearch}
         />
-        <Button onPress={logout} accessibilityLabel="Sign out">
-          <Text style={styles.logout}>Sign out</Text>
-        </Button>
+        <View style={styles.headerActions}>
+          <Button onPress={logout} accessibilityLabel="Sign out">
+            <Text style={styles.logout}>Sign out</Text>
+          </Button>
+          <Text style={styles.version}>v{APP_VERSION}</Text>
+        </View>
       </View>
 
       <FlatList
@@ -102,7 +106,9 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     padding: 10,
   },
+  headerActions: { alignItems: 'flex-end', gap: 2 },
   logout: { color: '#c00' },
+  version: { color: '#888', fontSize: 11 },
   list: { paddingHorizontal: 16 },
   empty: { textAlign: 'center', color: '#888', marginTop: 40 },
   row: {
