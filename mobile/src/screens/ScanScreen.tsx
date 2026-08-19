@@ -38,13 +38,16 @@ export default function ScanScreen({ navigation }: Props) {
   const finishWithPhotos = async (frontPhotoUri: string, backPhotoUri?: string) => {
     setBusy(true);
     try {
-      const frontBase64 = await prepareImageForUpload(frontPhotoUri);
-      const backBase64 = backPhotoUri ? await prepareImageForUpload(backPhotoUri) : undefined;
-      const draft = await extractCard(frontBase64, backBase64);
+      const front = await prepareImageForUpload(frontPhotoUri);
+      const back = backPhotoUri ? await prepareImageForUpload(backPhotoUri) : undefined;
+      const draft = await extractCard(front.base64, back?.base64);
       navigation.navigate('ReviewEdit', {
         draft,
-        localImageUri: frontPhotoUri,
-        localBackImageUri: backPhotoUri,
+        // The rendered copies rather than the originals: this render has already happened for the
+        // extractCard call, and reusing it is what keeps Save from uploading the scanner's
+        // full-resolution capture. The review screen decodes them faster too.
+        localImageUri: front.uri,
+        localBackImageUri: back?.uri,
       });
     } catch (e) {
       console.error('Card extraction failed:', e);

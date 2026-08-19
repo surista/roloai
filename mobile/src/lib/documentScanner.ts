@@ -17,16 +17,42 @@ export async function scanCardEdge(): Promise<CardScanResult> {
   return CardScanner.scanCard();
 }
 
-/** Resizes/compresses a local image and returns its base64 data, ready for the extractCard function. */
-export async function prepareImageForUpload(uri: string): Promise<string> {
-  const rendered = await renderAtMostWide(uri, 1600);
+/**
+ * The size and quality every card image is stored and sent at.
+ *
+ * The scanner writes its crop at the capture buffer's full resolution and q0.9, which is several
+ * megabytes a side — uploading that verbatim was most of what "Save" was waiting on. 1600px is
+ * comfortably above what either app displays, and q0.8 rather than the 0.7 that was fine for a
+ * throwaway vision-call input, since this file is now the stored copy of the card.
+ */
+const UPLOAD_MAX_WIDTH = 1600;
+const UPLOAD_QUALITY = 0.8;
+
+/**
+ * Renders a local image at upload size and returns both the file and its base64 data.
+ *
+ * One render serves both purposes: the base64 goes to extractCard and the same file is what gets
+ * stored, so the save no longer re-encodes anything or ships the full-resolution original.
+ */
+export async function prepareImageForUpload(uri: string): Promise<{ uri: string; base64: string }> {
+  const rendered = await renderAtMostWide(uri, UPLOAD_MAX_WIDTH);
   const result = await rendered.saveAsync({
     format: SaveFormat.JPEG,
-    compress: 0.7,
+    compress: UPLOAD_QUALITY,
     base64: true,
   });
   if (!result.base64) throw new Error('Failed to encode image');
-  return result.base64;
+  return { uri: result.uri, base64: result.base64 };
+}
+
+/**
+ * As {@link prepareImageForUpload}, without the base64. Used by the retake-on-a-saved-card path,
+ * which replaces the stored image but never calls extractCard.
+ */
+export async function renderForUpload(uri: string): Promise<string> {
+  const rendered = await renderAtMostWide(uri, UPLOAD_MAX_WIDTH);
+  const result = await rendered.saveAsync({ format: SaveFormat.JPEG, compress: UPLOAD_QUALITY });
+  return result.uri;
 }
 
 /**

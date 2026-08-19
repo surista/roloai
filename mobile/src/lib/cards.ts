@@ -13,7 +13,7 @@ import {
 import { deleteObject, getDownloadURL, ref, uploadBytes } from 'firebase/storage';
 import { cardFromFirestore, stripUndefined, type Card, type CardDraft } from '@roloai/shared';
 import { db, storage } from './firebase';
-import { makeThumbnail } from './documentScanner';
+import { makeThumbnail, renderForUpload } from './documentScanner';
 
 const cardsCollection = collection(db, 'cards');
 
@@ -62,18 +62,40 @@ export async function uploadCardImage(
   return uploadTo(`cards/${cardId}/${side}-${Date.now()}.jpg`, localUri);
 }
 
-/** Uploads the front image plus a small copy for the list views. */
+/** The url of whichever uploads landed, for the cleanup that follows a partial failure. */
+function fulfilledUrls(results: PromiseSettledResult<unknown>[]): string[] {
+  return results.flatMap((result) => {
+    if (result.status === 'rejected') return [];
+    const value = result.value as { imageUrl?: string; thumbUrl?: string } | string | undefined;
+    if (typeof value === 'string') return [value];
+    return [value?.imageUrl, value?.thumbUrl].filter((url): url is string => Boolean(url));
+  });
+}
+
+/**
+ * Uploads the front image plus a small copy for the list views.
+ *
+ * Rendering the thumbnail is CPU work on the same file with no dependency on the upload, so the
+ * two overlap rather than running end to end. `allSettled` rather than `all`: `all` rejects while
+ * the other half is still in flight, and a rejection here leaves the caller no url to clean up,
+ * so whatever landed afterwards would sit in the bucket unreferenced forever.
+ */
 async function uploadFrontWithThumbnail(
   cardId: string,
   localUri: string
 ): Promise<{ imageUrl: string; thumbUrl: string }> {
   const stamp = Date.now();
-  const thumbUri = await makeThumbnail(localUri);
-  const [imageUrl, thumbUrl] = await Promise.all([
+  const settled = await Promise.allSettled([
     uploadTo(`cards/${cardId}/front-${stamp}.jpg`, localUri),
-    uploadTo(`cards/${cardId}/thumb-${stamp}.jpg`, thumbUri),
+    makeThumbnail(localUri).then((uri) => uploadTo(`cards/${cardId}/thumb-${stamp}.jpg`, uri)),
   ]);
-  return { imageUrl, thumbUrl };
+  const failure = settled.find((r): r is PromiseRejectedResult => r.status === 'rejected');
+  if (failure) {
+    await Promise.all(fulfilledUrls(settled).map(deleteImageByUrl));
+    throw failure.reason;
+  }
+  const [image, thumb] = settled as PromiseFulfilledResult<string>[];
+  return { imageUrl: image.value, thumbUrl: thumb.value };
 }
 
 /**
@@ -90,25 +112,25 @@ export async function createCard(
 ): Promise<string> {
   const docRef = doc(cardsCollection);
 
-  let front: { imageUrl: string; thumbUrl: string } | undefined;
-  let backUrl: string | undefined;
-  try {
-    if (localImageUri) {
-      front = await uploadFrontWithThumbnail(docRef.id, localImageUri);
-    }
-    if (localBackImageUri) {
-      backUrl = await uploadCardImage(docRef.id, localBackImageUri, 'back');
-    }
-  } catch (e) {
+  // The two sides are independent uploads. Awaiting them in turn meant a two-sided card paid for
+  // them end to end, which on a slow connection is most of what "Save" was waiting on.
+  const settled = await Promise.allSettled([
+    localImageUri ? uploadFrontWithThumbnail(docRef.id, localImageUri) : undefined,
+    localBackImageUri ? uploadCardImage(docRef.id, localBackImageUri, 'back') : undefined,
+  ]);
+  const failure = settled.find((r): r is PromiseRejectedResult => r.status === 'rejected');
+  if (failure) {
     // Nothing has been written to Firestore yet, so the retry the caller prompts for starts
     // clean. Sweep any half-finished upload so it doesn't sit in the bucket unreferenced.
-    await Promise.all(
-      [front?.imageUrl, front?.thumbUrl, backUrl]
-        .filter((url): url is string => Boolean(url))
-        .map(deleteImageByUrl)
-    );
-    throw e;
+    await Promise.all(fulfilledUrls(settled).map(deleteImageByUrl));
+    throw failure.reason;
   }
+  const [frontResult, backResult] = settled as [
+    PromiseFulfilledResult<{ imageUrl: string; thumbUrl: string } | undefined>,
+    PromiseFulfilledResult<string | undefined>,
+  ];
+  const front = frontResult.value;
+  const backUrl = backResult.value;
 
   await setDoc(docRef, {
     ...stripUndefined(draft),
@@ -136,9 +158,14 @@ export async function updateCardImage(
   previousUrl?: string,
   previousThumbUrl?: string
 ): Promise<string> {
+  // The scanner writes its crop at full capture resolution; the scan path renders it down before
+  // uploading, and a retake has to do the same or the card ends up with a several-megabyte image
+  // that no view displays at that size.
+  const uploadUri = await renderForUpload(localUri);
+
   // A front retake has to replace the thumbnail too, or the list keeps showing the old photo.
   if (side === 'front') {
-    const { imageUrl, thumbUrl } = await uploadFrontWithThumbnail(id, localUri);
+    const { imageUrl, thumbUrl } = await uploadFrontWithThumbnail(id, uploadUri);
     await updateDoc(doc(db, 'cards', id), {
       imageUrl,
       thumbUrl,
@@ -152,7 +179,7 @@ export async function updateCardImage(
     return imageUrl;
   }
 
-  const url = await uploadCardImage(id, localUri, 'back');
+  const url = await uploadCardImage(id, uploadUri, 'back');
   await updateDoc(doc(db, 'cards', id), {
     imageBackUrl: url,
     updatedAt: serverTimestamp(),
