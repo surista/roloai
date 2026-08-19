@@ -170,6 +170,17 @@ export default function ScanScreen({ navigation }: Props) {
           </View>
         ))}
 
+      {/* Scan is a full-bleed headerless screen, so the navigator gives it no back button and
+          the iOS edge-swipe is the only way out. Disabled while extracting: finishWithPhotos
+          navigates to ReviewEdit on success and would yank a departed user back. */}
+      <Button
+        style={[styles.cancelButton, { top: insets.top + 8 }]}
+        onPress={() => navigation.goBack()}
+        disabled={busy}
+      >
+        <Text style={styles.cancelText}>Cancel</Text>
+      </Button>
+
       {/* Hidden mid-capture: switching to QR would silently discard the front photo. */}
       <View
         style={[styles.modeSwitch, { top: insets.top + 8 }, frontUri && styles.hidden]}
@@ -247,6 +258,15 @@ const styles = StyleSheet.create({
   secondaryButton: { paddingVertical: 14, paddingHorizontal: 24, marginTop: 4 },
   secondaryButtonText: { color: '#aaa', fontWeight: '600', fontSize: 15 },
   hidden: { display: 'none' },
+  cancelButton: {
+    position: 'absolute',
+    left: 16,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    borderRadius: 20,
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+  },
+  cancelText: { color: '#fff', fontWeight: '600' },
   modeSwitch: {
     position: 'absolute',
     alignSelf: 'center',
