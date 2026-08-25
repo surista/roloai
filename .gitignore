@@ -22,3 +22,6 @@ functions/lib/
 
 # Firebase service account keys — never commit
 *-firebase-adminsdk-*.json
+
+# Working data for the one-off CamCard import: contact details and card photos, not source.
+.camcard-import/
