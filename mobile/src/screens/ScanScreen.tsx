@@ -38,8 +38,10 @@ export default function ScanScreen({ navigation }: Props) {
   const finishWithPhotos = async (frontPhotoUri: string, backPhotoUri?: string) => {
     setBusy(true);
     try {
-      const front = await prepareImageForUpload(frontPhotoUri);
-      const back = backPhotoUri ? await prepareImageForUpload(backPhotoUri) : undefined;
+      const [front, back] = await Promise.all([
+        prepareImageForUpload(frontPhotoUri),
+        backPhotoUri ? prepareImageForUpload(backPhotoUri) : Promise.resolve(undefined),
+      ]);
       const draft = await extractCard(front.base64, back?.base64);
       navigation.navigate('ReviewEdit', {
         draft,

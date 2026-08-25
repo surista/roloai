@@ -1,5 +1,5 @@
 import { Image } from 'react-native';
-import { ImageManipulator, SaveFormat } from 'expo-image-manipulator';
+import { ImageManipulator, SaveFormat, type ImageRef } from 'expo-image-manipulator';
 import CardScanner, { type CardScanResult } from '../../modules/card-scanner';
 
 export type { CardScanResult };
@@ -45,14 +45,18 @@ export async function prepareImageForUpload(uri: string): Promise<{ uri: string;
   return { uri: result.uri, base64: result.base64 };
 }
 
+/** Every other caller here just wants the saved file's uri, at some quality. */
+async function saveJpegUri(rendered: ImageRef, compress: number): Promise<string> {
+  const result = await rendered.saveAsync({ format: SaveFormat.JPEG, compress });
+  return result.uri;
+}
+
 /**
  * As {@link prepareImageForUpload}, without the base64. Used by the retake-on-a-saved-card path,
  * which replaces the stored image but never calls extractCard.
  */
 export async function renderForUpload(uri: string): Promise<string> {
-  const rendered = await renderAtMostWide(uri, UPLOAD_MAX_WIDTH);
-  const result = await rendered.saveAsync({ format: SaveFormat.JPEG, compress: UPLOAD_QUALITY });
-  return result.uri;
+  return saveJpegUri(await renderAtMostWide(uri, UPLOAD_MAX_WIDTH), UPLOAD_QUALITY);
 }
 
 /**
@@ -65,9 +69,7 @@ export async function renderForUpload(uri: string): Promise<string> {
 export async function rotateImage(uri: string, degrees: number): Promise<string> {
   const context = ImageManipulator.manipulate(uri);
   context.rotate(degrees);
-  const rendered = await context.renderAsync();
-  const result = await rendered.saveAsync({ format: SaveFormat.JPEG, compress: UPLOAD_QUALITY });
-  return result.uri;
+  return saveJpegUri(await context.renderAsync(), UPLOAD_QUALITY);
 }
 
 /**
@@ -78,9 +80,7 @@ export async function rotateImage(uri: string, degrees: number): Promise<string>
  * views download and decode the multi-megabyte original once per row.
  */
 export async function makeThumbnail(uri: string): Promise<string> {
-  const rendered = await renderAtMostWide(uri, 400);
-  const result = await rendered.saveAsync({ format: SaveFormat.JPEG, compress: 0.6 });
-  return result.uri;
+  return saveJpegUri(await renderAtMostWide(uri, 400), 0.6);
 }
 
 /**

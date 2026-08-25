@@ -159,9 +159,12 @@ function parseLines(text: string): ParsedLine[] {
 function labelFrom(params: string[], fallback: string): string {
   for (const param of params) {
     const value = param.startsWith('TYPE=') ? param.slice(5) : param;
-    const lower = value.toLowerCase();
-    if (lower === 'cell') return 'mobile';
-    if (KNOWN_TYPES.has(lower)) return lower;
+    // TYPE is comma-separated when a property carries more than one, e.g. TYPE=CELL,VOICE.
+    for (const part of value.split(',')) {
+      const lower = part.toLowerCase();
+      if (lower === 'cell') return 'mobile';
+      if (KNOWN_TYPES.has(lower)) return lower;
+    }
   }
   return fallback;
 }

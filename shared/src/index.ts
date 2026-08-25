@@ -47,6 +47,11 @@ export function cardImageUrls(card: Pick<Card, 'imageUrl' | 'imageBackUrl' | 'th
   );
 }
 
+/** The image to show in a card list tile: the thumbnail if one exists, else the full image. */
+export function cardThumbUrl(card: Pick<Card, 'imageUrl' | 'thumbUrl'>): string | undefined {
+  return card.thumbUrl || card.imageUrl || undefined;
+}
+
 /** Shape used while building a Card in the review/edit form, before it has an id or timestamps. */
 export type CardDraft = Omit<Card, 'id' | 'createdAt' | 'updatedAt'>;
 

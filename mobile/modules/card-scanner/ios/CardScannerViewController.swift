@@ -80,8 +80,8 @@ final class CardScannerViewController: UIViewController {
     view.backgroundColor = .black
     configureInterface()
     sessionQueue.async { [weak self] in
-      self?.configureSession()
-      self?.session.startRunning()
+      guard let self, self.configureSession() else { return }
+      self.session.startRunning()
     }
   }
 
@@ -151,7 +151,10 @@ final class CardScannerViewController: UIViewController {
     ])
   }
 
-  private func configureSession() {
+  /// Returns whether the session ended up with an input worth running. `false` means
+  /// `report(.unavailable)` has already been called and the caller must not start the session.
+  @discardableResult
+  private func configureSession() -> Bool {
     session.beginConfiguration()
     // .photo gives the largest 4:3 buffer the video path will deliver, which is what the capture
     // is now taken from. There is no AVCapturePhotoOutput here on purpose: it plays the system
@@ -164,7 +167,7 @@ final class CardScannerViewController: UIViewController {
           session.canAddInput(input) else {
       session.commitConfiguration()
       report(.unavailable)
-      return
+      return false
     }
     session.addInput(input)
     captureDevice = device
@@ -188,6 +191,7 @@ final class CardScannerViewController: UIViewController {
       }
       device.unlockForConfiguration()
     }
+    return true
   }
 
   // MARK: - Result

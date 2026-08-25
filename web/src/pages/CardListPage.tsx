@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { CARD_SORT_OPTIONS, sortCards, type Card, type CardSort } from '@roloai/shared';
+import { CARD_SORT_OPTIONS, cardThumbUrl, sortCards, type Card, type CardSort } from '@roloai/shared';
 import { subscribeToCards } from '../lib/cards';
 
 export default function CardListPage() {
@@ -86,31 +86,26 @@ export default function CardListPage() {
         <p className="empty">No cards found. Scan one from the iPhone app to see it here.</p>
       ) : (
         <div className="card-grid">
-          {filtered.map((card) => (
-            <Link key={card.id} to={`/cards/${card.id}`} className="card-tile">
-              {/* thumbUrl is absent on cards saved before thumbnails existed, so fall back to
-                  the full image rather than showing a blank tile for them. */}
-              {card.thumbUrl || card.imageUrl ? (
-                <img
-                  src={card.thumbUrl || card.imageUrl}
-                  alt=""
-                  className="card-thumb"
-                  loading="lazy"
-                  decoding="async"
-                />
-              ) : (
-                <div className="card-thumb card-thumb-placeholder" />
-              )}
-              <div className="card-tile-body">
-                <div className="card-name">
-                  {card.firstName} {card.lastName}
+          {filtered.map((card) => {
+            const thumb = cardThumbUrl(card);
+            return (
+              <Link key={card.id} to={`/cards/${card.id}`} className="card-tile">
+                {thumb ? (
+                  <img src={thumb} alt="" className="card-thumb" loading="lazy" decoding="async" />
+                ) : (
+                  <div className="card-thumb card-thumb-placeholder" />
+                )}
+                <div className="card-tile-body">
+                  <div className="card-name">
+                    {card.firstName} {card.lastName}
+                  </div>
+                  <div className="card-subtitle">
+                    {[card.jobTitle, card.company].filter(Boolean).join(' · ')}
+                  </div>
                 </div>
-                <div className="card-subtitle">
-                  {[card.jobTitle, card.company].filter(Boolean).join(' · ')}
-                </div>
-              </div>
-            </Link>
-          ))}
+              </Link>
+            );
+          })}
         </div>
       )}
     </div>

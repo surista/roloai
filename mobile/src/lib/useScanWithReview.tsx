@@ -3,7 +3,19 @@ import { Modal, View, Image, Text, ActivityIndicator, StyleSheet } from 'react-n
 import { StatusBar } from 'expo-status-bar';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Button from '../components/Button';
+import { alertForScanFailure } from './cameraAlerts';
 import { rotateImage, scanCardEdge, type CardScanResult } from './documentScanner';
+
+/**
+ * The capture under review. `original` and `rotation` travel with `uri` in one value so a
+ * rotation can never update the displayed image without updating what it was rotated from —
+ * see handleRotate, which reads `original` rather than re-rotating the already-rotated `uri`.
+ */
+interface Capture {
+  uri: string;
+  original: string;
+  rotation: number;
+}
 
 /**
  * Wraps scanCardEdge() with a confirmation step: the scanner auto-captures a single shot and
@@ -18,29 +30,21 @@ import { rotateImage, scanCardEdge, type CardScanResult } from './documentScanne
  */
 export function useScanWithReview() {
   const insets = useSafeAreaInsets();
-  const [pendingUri, setPendingUri] = useState<string | null>(null);
+  const [capture, setCapture] = useState<Capture | null>(null);
   const [label, setLabel] = useState<string | undefined>(undefined);
   const [rotating, setRotating] = useState(false);
   const resolverRef = useRef<((result: CardScanResult) => void) | null>(null);
-  // The untouched capture, kept so each rotation re-renders from it rather than from the last
-  // rotation — see rotateImage. `rotation` is the total turn currently applied to it.
-  const originalUriRef = useRef<string | null>(null);
-  const rotationRef = useRef(0);
 
   /** A freshly captured shot replaces whatever was under review, rotation and all. */
   const showCapture = (uri: string) => {
-    originalUriRef.current = uri;
-    rotationRef.current = 0;
-    setPendingUri(uri);
+    setCapture({ uri, original: uri, rotation: 0 });
   };
 
   const settle = (result: CardScanResult) => {
     resolverRef.current?.(result);
     resolverRef.current = null;
-    setPendingUri(null);
+    setCapture(null);
     setLabel(undefined);
-    originalUriRef.current = null;
-    rotationRef.current = 0;
   };
 
   const scan = useCallback((scanLabel?: string): Promise<CardScanResult> => {
@@ -71,11 +75,17 @@ export function useScanWithReview() {
       const result = await scanCardEdge();
       if (result.status === 'ok') {
         showCapture(result.uri);
+        return;
       }
-      // Anything else (including a cancel) leaves the review open on the existing photo rather
-      // than losing it — the user still has Accept and Cancel to choose from.
+      // A cancel leaves the review open on the existing photo rather than losing it — the user
+      // still has Accept and Cancel to choose from. Denied/unavailable get the same explanation
+      // every other scanCardEdge() call site gives, or the retake button would look dead.
+      if (result.status !== 'cancelled') {
+        alertForScanFailure(result);
+      }
     } catch (e) {
       console.error('Card scanner failed:', e);
+      alertForScanFailure({ status: 'unavailable' });
     }
   };
 
@@ -88,15 +98,13 @@ export function useScanWithReview() {
    * without recapturing and hoping.
    */
   const handleRotate = async () => {
-    const source = originalUriRef.current;
-    if (!source || rotating) return;
-    const next = (rotationRef.current + 90) % 360;
+    if (!capture || rotating) return;
+    const next = (capture.rotation + 90) % 360;
     setRotating(true);
     try {
       // Back at 0 the original file is the answer, and re-rendering it would only lose quality.
-      const uri = next === 0 ? source : await rotateImage(source, next);
-      rotationRef.current = next;
-      setPendingUri(uri);
+      const uri = next === 0 ? capture.original : await rotateImage(capture.original, next);
+      setCapture({ ...capture, uri, rotation: next });
     } catch (e) {
       // The shot on screen is still perfectly usable, so this is worth reporting quietly rather
       // than tearing down a review the user may be about to accept.
@@ -106,7 +114,7 @@ export function useScanWithReview() {
     }
   };
 
-  const reviewModal = pendingUri ? (
+  const reviewModal = capture ? (
     <Modal
       visible
       transparent
@@ -123,7 +131,7 @@ export function useScanWithReview() {
         {/* Solid black backdrop — the app's "auto" (dark) status bar would be invisible. */}
         <StatusBar style="light" />
         {label && <Text style={styles.label}>{label}</Text>}
-        <Image source={{ uri: pendingUri }} style={styles.preview} resizeMode="contain" />
+        <Image source={{ uri: capture.uri }} style={styles.preview} resizeMode="contain" />
         <Button style={styles.rotateButton} onPress={handleRotate} disabled={rotating}>
           {rotating ? (
             <ActivityIndicator size="small" color="#fff" />
@@ -140,7 +148,7 @@ export function useScanWithReview() {
           </Button>
           <Button
             style={styles.acceptButton}
-            onPress={() => settle({ status: 'ok', uri: pendingUri })}
+            onPress={() => settle({ status: 'ok', uri: capture.uri })}
           >
             <Text style={styles.acceptButtonText}>Accept</Text>
           </Button>

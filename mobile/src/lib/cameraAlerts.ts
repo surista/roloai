@@ -8,17 +8,22 @@ import type { CardScanResult } from './documentScanner';
  * app has to say what is unavailable and offer the only route that can fix it. Without this the
  * scan button simply appears dead, forever, with nothing on screen to explain why.
  */
+/** Shared by both scan paths' permission denial — only the purpose named in the message differs. */
+function alertForPermissionDenied(purpose: string): void {
+  Alert.alert(
+    'Camera Access Needed',
+    `RoloAI needs camera access to scan ${purpose}. You can turn it on in Settings.`,
+    [
+      { text: 'Not Now', style: 'cancel' },
+      { text: 'Open Settings', onPress: () => void Linking.openSettings() },
+    ]
+  );
+}
+
 export function alertForScanFailure(result: CardScanResult): void {
   switch (result.status) {
     case 'denied':
-      Alert.alert(
-        'Camera Access Needed',
-        'RoloAI needs camera access to scan business cards. You can turn it on in Settings.',
-        [
-          { text: 'Not Now', style: 'cancel' },
-          { text: 'Open Settings', onPress: () => void Linking.openSettings() },
-        ]
-      );
+      alertForPermissionDenied('business cards');
       break;
     case 'unavailable':
       Alert.alert(
@@ -33,12 +38,5 @@ export function alertForScanFailure(result: CardScanResult): void {
 
 /** Same treatment for the QR scanner, which goes through expo-camera's permission hook. */
 export function alertForCameraPermissionDenied(): void {
-  Alert.alert(
-    'Camera Access Needed',
-    'RoloAI needs camera access to scan QR codes. You can turn it on in Settings.',
-    [
-      { text: 'Not Now', style: 'cancel' },
-      { text: 'Open Settings', onPress: () => void Linking.openSettings() },
-    ]
-  );
+  alertForPermissionDenied('QR codes');
 }

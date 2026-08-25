@@ -56,6 +56,14 @@ export const extractCard = onCall<ExtractCardRequest>(
     if (frontImageBase64.length > MAX_IMAGE_BASE64_LENGTH) {
       throw new HttpsError('invalid-argument', 'Image is too large.');
     }
+    if (backImageBase64 !== undefined) {
+      if (typeof backImageBase64 !== 'string') {
+        throw new HttpsError('invalid-argument', 'backImageBase64 must be a string.');
+      }
+      if (backImageBase64.length > MAX_IMAGE_BASE64_LENGTH) {
+        throw new HttpsError('invalid-argument', 'Image is too large.');
+      }
+    }
 
     // The SDK's own defaults (10 min timeout, 2 retries) outlast this function's 60s budget, so
     // a slow first attempt plus a retry gets killed by the platform *after* Anthropic has been
@@ -72,11 +80,8 @@ export const extractCard = onCall<ExtractCardRequest>(
         source: { type: 'base64', media_type: 'image/jpeg', data: frontImageBase64 },
       },
     ];
-    if (
-      backImageBase64 &&
-      typeof backImageBase64 === 'string' &&
-      backImageBase64.length <= MAX_IMAGE_BASE64_LENGTH
-    ) {
+    const hasBackImage = typeof backImageBase64 === 'string' && backImageBase64.length > 0;
+    if (hasBackImage) {
       content.push({
         type: 'image',
         source: { type: 'base64', media_type: 'image/jpeg', data: backImageBase64 },
@@ -84,7 +89,7 @@ export const extractCard = onCall<ExtractCardRequest>(
     }
     content.push({
       type: 'text',
-      text: backImageBase64
+      text: hasBackImage
         ? 'These are the front and back of a business card, which may be in different languages (e.g. English on one side, Japanese on the other). Extract the contact details as one merged record, preferring the clearest/most complete version of each field across both sides. Also include a rawText field with a full transcription of all text on both sides.'
         : 'This is a business card. Extract the contact details. Also include a rawText field with a full transcription of all text on the card.',
     });

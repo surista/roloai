@@ -3,7 +3,7 @@ import { View, Text, TextInput, FlatList, Image, ScrollView, StyleSheet } from '
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Button from '../components/Button';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
-import { CARD_SORT_OPTIONS, sortCards, type Card, type CardSort } from '@roloai/shared';
+import { CARD_SORT_OPTIONS, cardThumbUrl, sortCards, type Card, type CardSort } from '@roloai/shared';
 import type { RootStackParamList } from '../navigation/types';
 import { subscribeToCards } from '../lib/cards';
 import { APP_VERSION } from '../lib/version';
@@ -87,31 +87,32 @@ export default function CardListScreen({ navigation }: Props) {
         contentContainerStyle={[styles.list, { paddingBottom: insets.bottom + 100 }]}
         keyboardDismissMode="on-drag"
         ListEmptyComponent={<Text style={styles.empty}>No cards yet — tap Scan to add one.</Text>}
-        renderItem={({ item }) => (
-          <Button
-            style={styles.row}
-            pressedStyle={styles.rowPressed}
-            hitSlop={undefined}
-            onPress={() => navigation.navigate('CardDetail', { cardId: item.id })}
-            accessibilityLabel={`${item.firstName} ${item.lastName}`.trim() || 'Card'}
-          >
-            {/* thumbUrl is absent on cards saved before thumbnails existed, so fall back to the
-                full image rather than showing a blank tile for them. */}
-            {item.thumbUrl || item.imageUrl ? (
-              <Image source={{ uri: item.thumbUrl || item.imageUrl }} style={styles.thumb} />
-            ) : (
-              <View style={[styles.thumb, styles.thumbPlaceholder]} />
-            )}
-            <View style={styles.rowText}>
-              <Text style={styles.name}>
-                {item.firstName} {item.lastName}
-              </Text>
-              <Text style={styles.subtitle}>
-                {[item.jobTitle, item.company].filter(Boolean).join(' · ')}
-              </Text>
-            </View>
-          </Button>
-        )}
+        renderItem={({ item }) => {
+          const thumb = cardThumbUrl(item);
+          return (
+            <Button
+              style={styles.row}
+              pressedStyle={styles.rowPressed}
+              hitSlop={undefined}
+              onPress={() => navigation.navigate('CardDetail', { cardId: item.id })}
+              accessibilityLabel={`${item.firstName} ${item.lastName}`.trim() || 'Card'}
+            >
+              {thumb ? (
+                <Image source={{ uri: thumb }} style={styles.thumb} />
+              ) : (
+                <View style={[styles.thumb, styles.thumbPlaceholder]} />
+              )}
+              <View style={styles.rowText}>
+                <Text style={styles.name}>
+                  {item.firstName} {item.lastName}
+                </Text>
+                <Text style={styles.subtitle}>
+                  {[item.jobTitle, item.company].filter(Boolean).join(' · ')}
+                </Text>
+              </View>
+            </Button>
+          );
+        }}
       />
 
       <Button

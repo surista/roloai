@@ -1,4 +1,4 @@
-import type { CardDraft } from '@roloai/shared';
+import { parseVCards, type CardDraft } from '@roloai/shared';
 
 function emptyDraft(source: CardDraft['source']): CardDraft {
   return {
@@ -24,7 +24,11 @@ export function parseQrPayload(data: string): CardDraft {
   draft.rawOcrText = data;
 
   if (data.startsWith('BEGIN:VCARD')) {
-    return { ...draft, ...parseVCard(data) };
+    // Delegates to the shared RFC 6350 parser (used for .vcf import too) rather than a second,
+    // simpler implementation here — that one unescapes values and splits multi-valued TYPE
+    // params correctly, which a from-scratch parser is easy to get subtly wrong.
+    const [parsed] = parseVCards(data);
+    return parsed ? { ...draft, ...parsed, source: 'qr' } : draft;
   }
   if (data.startsWith('MECARD:')) {
     return { ...draft, ...parseMeCard(data) };
@@ -33,80 +37,6 @@ export function parseQrPayload(data: string): CardDraft {
   // Unknown QR format — fall back to treating the raw payload as notes so nothing is lost.
   draft.notes = data;
   return draft;
-}
-
-/**
- * Pulls a usable label out of a vCard property's parameters — `TEL;TYPE=CELL:...` is a mobile,
- * not a work number, and flattening every entry to "work" loses the only thing that
- * distinguishes them.
- */
-function labelFromParams(rawKey: string, fallback: string): string {
-  const params = rawKey.split(';').slice(1);
-  for (const param of params) {
-    const [name, value] = param.split('=');
-    if (!value) continue;
-    if (name.toUpperCase() !== 'TYPE') continue;
-    // TYPE can be a comma-separated set (TYPE=WORK,VOICE,PREF). VOICE/PREF/INTERNET say
-    // nothing useful about which number this is, so skip past them.
-    const meaningful = value
-      .split(',')
-      .map((t) => t.trim().toLowerCase())
-      .find((t) => t && !['voice', 'pref', 'internet', 'other'].includes(t));
-    if (meaningful) return meaningful;
-  }
-  return fallback;
-}
-
-function parseVCard(data: string): Partial<CardDraft> {
-  const result: Partial<CardDraft> = { phones: [], emails: [] };
-  const lines = data.split(/\r?\n/);
-
-  for (const line of lines) {
-    const [rawKey, ...rest] = line.split(':');
-    const value = rest.join(':').trim();
-    if (!value) continue;
-    const key = rawKey.split(';')[0].toUpperCase();
-
-    switch (key) {
-      case 'N': {
-        const [lastName, firstName] = value.split(';');
-        result.firstName = firstName?.trim() || '';
-        result.lastName = lastName?.trim() || '';
-        break;
-      }
-      case 'FN':
-        if (!result.firstName && !result.lastName) {
-          const parts = value.split(/\s+/);
-          result.firstName = parts[0] ?? '';
-          result.lastName = parts.slice(1).join(' ');
-        }
-        break;
-      case 'TITLE':
-        result.jobTitle = value;
-        break;
-      case 'ORG':
-        result.company = value.split(';')[0];
-        break;
-      case 'TEL':
-        result.phones!.push({ label: labelFromParams(rawKey, 'work'), number: value });
-        break;
-      case 'EMAIL':
-        result.emails!.push({ label: labelFromParams(rawKey, 'work'), address: value });
-        break;
-      case 'URL':
-        result.website = value;
-        break;
-      case 'ADR': {
-        const addr = value.split(';').filter(Boolean).join(', ');
-        if (addr) result.address = addr;
-        break;
-      }
-      default:
-        break;
-    }
-  }
-
-  return result;
 }
 
 function parseMeCard(data: string): Partial<CardDraft> {
