@@ -12,6 +12,7 @@ import ScanScreen from './src/screens/ScanScreen';
 import ReviewEditScreen from './src/screens/ReviewEditScreen';
 import CardDetailScreen from './src/screens/CardDetailScreen';
 import SettingsScreen from './src/screens/SettingsScreen';
+import MyCardScreen from './src/screens/MyCardScreen';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
@@ -38,6 +39,7 @@ function AppNavigator() {
         <Stack.Screen name="ReviewEdit" component={ReviewEditScreen} options={{ title: 'Review Card' }} />
         <Stack.Screen name="CardDetail" component={CardDetailScreen} options={{ title: 'Card Details' }} />
         <Stack.Screen name="Settings" component={SettingsScreen} options={{ title: 'Settings' }} />
+        <Stack.Screen name="MyCard" component={MyCardScreen} options={{ title: 'My Card' }} />
       </Stack.Navigator>
     </NavigationContainer>
   );

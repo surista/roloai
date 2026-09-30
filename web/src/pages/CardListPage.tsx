@@ -1,34 +1,43 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { CARD_SORT_OPTIONS, cardThumbUrl, sortCards, type Card, type CardSort } from '@roloai/shared';
+import {
+  CARD_SORT_OPTIONS,
+  allTags as collectTags,
+  cardThumbUrl,
+  companyCounts,
+  filterCards,
+  groupPairs,
+  sortCards,
+  type Card,
+  type CardSort,
+} from '@roloai/shared';
 import { subscribeToCards } from '../lib/cards';
 
 export default function CardListPage() {
   const [cards, setCards] = useState<Card[]>([]);
   const [search, setSearch] = useState('');
   const [activeTag, setActiveTag] = useState<string | null>(null);
+  const [company, setCompany] = useState('');
   const [sort, setSort] = useState<CardSort>('recent');
 
   useEffect(() => subscribeToCards(setCards), []);
 
-  const allTags = useMemo(() => {
-    const tags = new Set<string>();
-    cards.forEach((c) => c.tags.forEach((t) => tags.add(t)));
-    return Array.from(tags).sort();
-  }, [cards]);
+  const allTags = useMemo(() => collectTags(cards), [cards]);
+  const companies = useMemo(() => companyCounts(cards), [cards]);
 
-  const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    const matches = cards.filter((c) => {
-      if (activeTag && !c.tags.includes(activeTag)) return false;
-      if (!q) return true;
-      return [c.firstName, c.lastName, c.company, c.jobTitle, ...c.tags]
-        .filter(Boolean)
-        .some((field) => field!.toLowerCase().includes(q));
-    });
-    // Sorting after filtering, so the comparator only runs over what is on screen.
-    return sortCards(matches, sort);
-  }, [cards, search, activeTag, sort]);
+  const { entries, matchCount } = useMemo(() => {
+    const matches = filterCards(cards, { search, tag: activeTag ?? undefined, company: company || undefined });
+    const matchIds = new Set(matches.map((c) => c.id));
+    // Pair up the *whole* sorted library and filter the tiles afterwards: filtering first would
+    // drop one half of a pair whenever only it matched (searching the English name, say) and
+    // show the other half as if it had no partner.
+    const grouped = groupPairs(sortCards(cards, sort)).filter(
+      ({ card, partner }) => matchIds.has(card.id) || (partner && matchIds.has(partner.id))
+    );
+    return { entries: grouped, matchCount: matches.length };
+  }, [cards, search, activeTag, company, sort]);
+
+  const isFiltering = Boolean(search.trim() || activeTag || company);
 
   return (
     <div className="card-list-page">
@@ -46,10 +55,23 @@ export default function CardListPage() {
         <div className="filter-row">
           <input
             className="search-input"
-            placeholder="Search name, company, tag…"
+            placeholder="Search name, company, email, phone, notes…"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
+          {companies.length > 0 && (
+            <label className="sort-control">
+              Company
+              <select value={company} onChange={(e) => setCompany(e.target.value)}>
+                <option value="">All companies</option>
+                {companies.map((c) => (
+                  <option key={c.company} value={c.company}>
+                    {c.company} ({c.count})
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
           <label className="sort-control">
             Sort by
             <select value={sort} onChange={(e) => setSort(e.target.value as CardSort)}>
@@ -82,11 +104,17 @@ export default function CardListPage() {
         )}
       </div>
 
-      {filtered.length === 0 ? (
+      {isFiltering && (
+        <p className="result-count">
+          {matchCount} of {cards.length} cards
+        </p>
+      )}
+
+      {entries.length === 0 ? (
         <p className="empty">No cards found. Scan one from the iPhone app to see it here.</p>
       ) : (
         <div className="card-grid">
-          {filtered.map((card) => {
+          {entries.map(({ card, partner }) => {
             const thumb = cardThumbUrl(card);
             return (
               <Link key={card.id} to={`/cards/${card.id}`} className="card-tile">
@@ -99,6 +127,11 @@ export default function CardListPage() {
                   <div className="card-name">
                     {card.firstName} {card.lastName}
                   </div>
+                  {partner && (
+                    <div className="card-partner-name">
+                      {partner.firstName} {partner.lastName}
+                    </div>
+                  )}
                   <div className="card-subtitle">
                     {[card.jobTitle, card.company].filter(Boolean).join(' · ')}
                   </div>

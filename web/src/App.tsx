@@ -4,6 +4,7 @@ import LoginPage from './pages/LoginPage';
 import CardListPage from './pages/CardListPage';
 import CardDetailPage from './pages/CardDetailPage';
 import SettingsPage from './pages/SettingsPage';
+import MyCardPage from './pages/MyCardPage';
 
 function AuthGate() {
   const { user, initializing } = useAuth();
@@ -16,6 +17,7 @@ function AuthGate() {
       <Route path="/" element={<CardListPage />} />
       <Route path="/cards/:cardId" element={<CardDetailPage />} />
       <Route path="/settings" element={<SettingsPage />} />
+      <Route path="/my-card" element={<MyCardPage />} />
     </Routes>
   );
 }

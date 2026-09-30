@@ -3,12 +3,15 @@ import {
   deleteDoc,
   deleteField,
   doc,
+  getDoc,
+  getDocs,
   onSnapshot,
   orderBy,
   query,
   serverTimestamp,
   setDoc,
   updateDoc,
+  writeBatch,
 } from 'firebase/firestore';
 import { deleteObject, getDownloadURL, ref, uploadBytes } from 'firebase/storage';
 import { cardFromFirestore, stripUndefined, type Card, type CardDraft } from '@roloai/shared';
@@ -44,6 +47,12 @@ export function subscribeToCards(onChange: (cards: Card[]) => void): () => void 
   return onSnapshot(q, (snapshot) => {
     onChange(snapshot.docs.map((d) => cardFromFirestore(d.id, d.data())));
   });
+}
+
+/** One-off read of the whole library, for checks that need every card at a single moment. */
+export async function fetchAllCards(): Promise<Card[]> {
+  const snapshot = await getDocs(cardsCollection);
+  return snapshot.docs.map((d) => cardFromFirestore(d.id, d.data()));
 }
 
 async function uploadTo(path: string, localUri: string): Promise<string> {
@@ -195,10 +204,94 @@ export async function updateCardImage(
 /**
  * A retake already cleans up the file it replaced, so the URLs still on the card — see
  * `cardImageUrls` — are the only ones left to remove.
+ *
+ * Pass `pairedWith` when the card has a partner so the partner is released too; the pairing
+ * reader ignores a one-sided link, but leaving it would strand a stale id on the survivor.
  */
-export async function deleteCard(id: string, imageUrls: (string | undefined)[] = []): Promise<void> {
+export async function deleteCard(
+  id: string,
+  imageUrls: (string | undefined)[] = [],
+  pairedWith?: string
+): Promise<void> {
   await Promise.all(
     imageUrls.filter((url): url is string => Boolean(url)).map(deleteImageByUrl)
   );
   await deleteDoc(doc(db, 'cards', id));
+  if (pairedWith) await clearLinkIfPointsAt(pairedWith, id);
+}
+
+/** Clears `cardId`'s pairedWith, but only if it still points at `expected` (and the card exists). */
+async function clearLinkIfPointsAt(cardId: string, expected: string): Promise<void> {
+  const snap = await getDoc(doc(db, 'cards', cardId));
+  if (!snap.exists() || snap.data().pairedWith !== expected) return;
+  await updateDoc(snap.ref, { pairedWith: deleteField() });
+}
+
+/**
+ * Pairs two cards (a person's Japanese and English cards) by writing `pairedWith` on both in one
+ * batch, so a failure can't leave a one-sided link.
+ *
+ * If either card was already paired with someone else, that old partner is released in the same
+ * batch — otherwise it would keep pointing at a card that now points elsewhere.
+ */
+export async function linkCards(aId: string, bId: string): Promise<void> {
+  const [a, b] = await Promise.all([
+    getDoc(doc(db, 'cards', aId)),
+    getDoc(doc(db, 'cards', bId)),
+  ]);
+  const batch = writeBatch(db);
+  for (const [snap, otherId] of [[a, bId], [b, aId]] as const) {
+    const old = snap.exists() ? (snap.data().pairedWith as string | undefined) : undefined;
+    if (old && old !== otherId && old !== aId && old !== bId) {
+      batch.update(doc(db, 'cards', old), { pairedWith: deleteField() });
+    }
+  }
+  batch.update(doc(db, 'cards', aId), { pairedWith: bId });
+  batch.update(doc(db, 'cards', bId), { pairedWith: aId });
+  await batch.commit();
+}
+
+export async function unlinkCards(aId: string, bId: string): Promise<void> {
+  const batch = writeBatch(db);
+  batch.update(doc(db, 'cards', aId), { pairedWith: deleteField() });
+  batch.update(doc(db, 'cards', bId), { pairedWith: deleteField() });
+  await batch.commit();
+}
+
+/** Firestore caps a batch at 500 writes, so anything larger goes up as consecutive batches. */
+const BATCH_LIMIT = 500;
+
+async function commitInBatches(
+  count: number,
+  write: (batch: ReturnType<typeof writeBatch>, index: number) => void
+): Promise<number> {
+  for (let start = 0; start < count; start += BATCH_LIMIT) {
+    const batch = writeBatch(db);
+    for (let i = start; i < Math.min(start + BATCH_LIMIT, count); i++) write(batch, i);
+    await batch.commit();
+  }
+  return count;
+}
+
+/** Adds imported vCard contacts as new documents (no id to match against, as on web). */
+export async function importCards(drafts: CardDraft[]): Promise<number> {
+  return commitInBatches(drafts.length, (batch, i) => {
+    batch.set(doc(cardsCollection), {
+      ...stripUndefined(drafts[i]),
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
+  });
+}
+
+/**
+ * Restores backup cards under their original ids, overwriting any with the same id. Timestamps
+ * go back as the exported millisecond numbers, which cardFromFirestore reads, so list order
+ * survives the restore (same as web).
+ */
+export async function restoreCards(cards: Card[]): Promise<number> {
+  return commitInBatches(cards.length, (batch, i) => {
+    const { id, ...fields } = cards[i];
+    batch.set(doc(db, 'cards', id), stripUndefined(fields));
+  });
 }

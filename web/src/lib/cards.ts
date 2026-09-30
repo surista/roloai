@@ -52,11 +52,48 @@ export async function updateCard(id: string, changes: Partial<CardDraft>): Promi
 }
 
 /** Storage has no cascade delete, so the card's photos have to be removed explicitly. */
-export async function deleteCard(id: string, imageUrls: (string | undefined)[] = []): Promise<void> {
+export async function deleteCard(
+  id: string,
+  imageUrls: (string | undefined)[] = [],
+  partnerId?: string
+): Promise<void> {
   await Promise.all(
     imageUrls.filter((url): url is string => Boolean(url)).map(deleteImageByUrl)
   );
-  await deleteDoc(doc(db, 'cards', id));
+  if (!partnerId) {
+    await deleteDoc(doc(db, 'cards', id));
+    return;
+  }
+  // One batch, so the partner is never left pointing at a card that no longer exists. Pass
+  // partnerId only for a *valid* partner: updating a missing document fails the whole batch.
+  const batch = writeBatch(db);
+  batch.delete(doc(db, 'cards', id));
+  batch.update(doc(db, 'cards', partnerId), {
+    pairedWith: deleteField(),
+    updatedAt: serverTimestamp(),
+  });
+  await batch.commit();
+}
+
+/**
+ * Links a person's Japanese and English cards. Both sides are written in one batch because a
+ * pair only counts when each card points at the other (see pairing.ts) — a half-written link
+ * would silently read as "unpaired".
+ */
+export async function linkCards(aId: string, bId: string): Promise<void> {
+  const batch = writeBatch(db);
+  batch.update(doc(db, 'cards', aId), { pairedWith: bId, updatedAt: serverTimestamp() });
+  batch.update(doc(db, 'cards', bId), { pairedWith: aId, updatedAt: serverTimestamp() });
+  await batch.commit();
+}
+
+/** Removes the link from both cards. */
+export async function unlinkCards(aId: string, bId: string): Promise<void> {
+  const batch = writeBatch(db);
+  for (const id of [aId, bId]) {
+    batch.update(doc(db, 'cards', id), { pairedWith: deleteField(), updatedAt: serverTimestamp() });
+  }
+  await batch.commit();
 }
 
 /** Firestore caps a batch at 500 writes, so anything larger goes up as consecutive batches. */

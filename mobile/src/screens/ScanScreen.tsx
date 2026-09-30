@@ -1,5 +1,5 @@
 import React, { useCallback, useState } from 'react';
-import { View, Text, Image, StyleSheet, ActivityIndicator, Alert } from 'react-native';
+import { View, Text, Image, StyleSheet } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Button from '../components/Button';
@@ -8,8 +8,7 @@ import { useFocusEffect } from '@react-navigation/native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../navigation/types';
 import { parseQrPayload } from '../lib/parseCard';
-import { extractCard, CardExtractionError } from '../lib/functions';
-import { prepareImageForUpload } from '../lib/documentScanner';
+import { forgetPhotos, prefetchPhoto } from '../lib/scanReader';
 import { useScanWithReview } from '../lib/useScanWithReview';
 import { alertForScanFailure, alertForCameraPermissionDenied } from '../lib/cameraAlerts';
 
@@ -20,7 +19,6 @@ export default function ScanScreen({ navigation }: Props) {
   const [permission, requestPermission] = useCameraPermissions();
   const insets = useSafeAreaInsets();
   const [mode, setMode] = useState<Mode>('photo');
-  const [busy, setBusy] = useState(false);
   const [qrLocked, setQrLocked] = useState(false);
   const [frontUri, setFrontUri] = useState<string | null>(null);
   const { scan, reviewModal } = useScanWithReview();
@@ -35,42 +33,25 @@ export default function ScanScreen({ navigation }: Props) {
     }, [])
   );
 
-  const finishWithPhotos = async (frontPhotoUri: string, backPhotoUri?: string) => {
-    setBusy(true);
-    try {
-      const [front, back] = await Promise.all([
-        prepareImageForUpload(frontPhotoUri),
-        backPhotoUri ? prepareImageForUpload(backPhotoUri) : Promise.resolve(undefined),
-      ]);
-      const draft = await extractCard(front.base64, back?.base64);
-      navigation.navigate('ReviewEdit', {
-        draft,
-        // The rendered copies rather than the originals: this render has already happened for the
-        // extractCard call, and reusing it is what keeps Save from uploading the scanner's
-        // full-resolution capture. The review screen decodes them faster too.
-        localImageUri: front.uri,
-        localBackImageUri: back?.uri,
-      });
-    } catch (e) {
-      console.error('Card extraction failed:', e);
-      Alert.alert(
-        'Scan failed',
-        e instanceof CardExtractionError
-          ? e.message
-          : 'Could not read the card. Check your connection and try again.'
-      );
-    } finally {
-      setBusy(false);
-    }
+  /**
+   * Hands the accepted photos to the review screen, which reads them. Nothing is awaited here:
+   * the card should be on screen immediately, not after the read.
+   */
+  const finishWithPhotos = (frontPhotoUri: string, backPhotoUri?: string) => {
+    navigation.navigate('ReviewEdit', {
+      scan: { frontUri: frontPhotoUri, backUri: backPhotoUri },
+    });
   };
 
   // The front/back choice is a step in this screen rather than an Alert: the review modal is
   // still animating out when scan() resolves, and iOS drops an alert presented against a
   // modal mid-dismissal, so the prompt never reliably appeared.
   const handleScanFront = async () => {
-    if (busy) return;
     const result = await scan('Front of card');
     if (result.status === 'ok') {
+      // Start reading now: the ~30s Claude call then runs while the user decides about the
+      // back, and "Skip — front only" lands on a read that is already done.
+      prefetchPhoto(result.uri);
       setFrontUri(result.uri);
       return;
     }
@@ -78,7 +59,7 @@ export default function ScanScreen({ navigation }: Props) {
   };
 
   const handleScanBack = async () => {
-    if (!frontUri || busy) return;
+    if (!frontUri) return;
     const result = await scan('Back of card');
     // Cancelling the back scan returns to the choice step rather than silently committing to
     // a front-only card — "Skip" is there for that, and is the deliberate way to say it.
@@ -86,12 +67,12 @@ export default function ScanScreen({ navigation }: Props) {
       alertForScanFailure(result);
       return;
     }
-    await finishWithPhotos(frontUri, result.uri);
+    finishWithPhotos(frontUri, result.uri);
   };
 
   const handleSkipBack = async () => {
-    if (!frontUri || busy) return;
-    await finishWithPhotos(frontUri);
+    if (!frontUri) return;
+    finishWithPhotos(frontUri);
   };
 
   // Once permission has been refused, requestPermission() resolves without prompting, so the
@@ -145,18 +126,12 @@ export default function ScanScreen({ navigation }: Props) {
             <Text style={styles.photoSubtitle}>
               Many cards have text on both sides (e.g. English/Japanese). Scan the back too?
             </Text>
-            {busy ? (
-              <ActivityIndicator color="#fff" />
-            ) : (
-              <>
-                <Button style={styles.scanButton} onPress={handleScanBack}>
-                  <Text style={styles.scanButtonText}>Scan Back</Text>
-                </Button>
-                <Button style={styles.secondaryButton} onPress={handleSkipBack}>
-                  <Text style={styles.secondaryButtonText}>Skip — front only</Text>
-                </Button>
-              </>
-            )}
+            <Button style={styles.scanButton} onPress={handleScanBack}>
+              <Text style={styles.scanButtonText}>Scan Back</Text>
+            </Button>
+            <Button style={styles.secondaryButton} onPress={handleSkipBack}>
+              <Text style={styles.secondaryButtonText}>Skip — front only</Text>
+            </Button>
           </View>
         ) : (
           <View style={styles.photoContainer}>
@@ -165,24 +140,19 @@ export default function ScanScreen({ navigation }: Props) {
               The camera will detect the card's edges and crop to just the card, like a document
               scanner.
             </Text>
-            <Button style={styles.scanButton} onPress={handleScanFront} disabled={busy}>
-              {busy ? (
-                <ActivityIndicator color="#fff" />
-              ) : (
-                <Text style={styles.scanButtonText}>Scan Card</Text>
-              )}
+            <Button style={styles.scanButton} onPress={handleScanFront}>
+              <Text style={styles.scanButtonText}>Scan Card</Text>
             </Button>
           </View>
         ))}
 
       {/* Scan is a full-bleed headerless screen, so the navigator gives it no back button and
-          the iOS edge-swipe is the only way out. Disabled while extracting: finishWithPhotos
-          navigates to ReviewEdit on success and would yank a departed user back. */}
-      <Button
-        style={[styles.cancelButton, { top: insets.top + 8 }]}
-        onPress={() => navigation.goBack()}
-        disabled={busy}
-      >
+          the iOS edge-swipe is the only way out. */}
+      <Button style={[styles.cancelButton, { top: insets.top + 8 }]} onPress={() => {
+          // Leaving mid-capture abandons the front, so its read has no one to hand it to.
+          forgetPhotos(frontUri ?? undefined);
+          navigation.goBack();
+        }}>
         <Text style={styles.cancelText}>Cancel</Text>
       </Button>
 

@@ -14,6 +14,7 @@ import Button from './Button';
 import ImageViewerModal from './ImageViewerModal';
 import { useScanWithReview } from '../lib/useScanWithReview';
 import { alertForScanFailure } from '../lib/cameraAlerts';
+import { SaveAborted } from '../lib/duplicateCheck';
 
 function joinPhones(phones: { number: string }[]): string {
   return phones.map((p) => p.number).join(', ');
@@ -75,7 +76,7 @@ interface Props {
   backImageUri?: string;
   saveLabel: string;
   /**
-   * Image URLs are excluded deliberately: the form never sets them, and letting them through as
+   * May throw SaveAborted to stop quietly. Image URLs are excluded deliberately: the form never sets them, and letting them through as
    * `undefined` would make updateCard's deleteField() mapping wipe the card's photos on a plain
    * text edit.
    */
@@ -83,6 +84,16 @@ interface Props {
   /** When provided, shows Retake/Add Photo controls for an already-saved card. */
   onRetakePhoto?: (side: 'front' | 'back', localUri: string) => Promise<void>;
   extraAction?: { label: string; onPress: () => void; destructive?: boolean };
+  /** A second, quieter action above the primary one (e.g. Share). */
+  secondaryAction?: { label: string; onPress: () => void };
+  /**
+   * The details are still being read off the photo. Shows the card with a banner, and holds the
+   * fields and Save until the draft arrives — the parent then remounts the form with it, which
+   * would throw away anything typed in the meantime.
+   */
+  reading?: boolean;
+  /** Rendered above everything else in the form (e.g. pairing banners). */
+  header?: React.ReactNode;
 }
 
 export default function CardForm({
@@ -93,6 +104,9 @@ export default function CardForm({
   onSave,
   onRetakePhoto,
   extraAction,
+  secondaryAction,
+  reading = false,
+  header,
 }: Props) {
   const [firstName, setFirstName] = useState(draft.firstName);
   const [lastName, setLastName] = useState(draft.lastName);
@@ -154,6 +168,9 @@ export default function CardForm({
         tags: splitToList(tagsText),
       });
     } catch (e) {
+      // The user backed out of a prompt (e.g. the duplicate warning). Nothing failed, so say
+      // nothing; `finally` clears the spinner.
+      if (e instanceof SaveAborted) return;
       console.error('Card save failed:', e);
       Alert.alert('Save failed', 'Check your connection and try again.');
     } finally {
@@ -172,6 +189,15 @@ export default function CardForm({
       keyboardDismissMode="interactive"
       automaticallyAdjustKeyboardInsets
     >
+      {header}
+
+      {reading && (
+        <View style={styles.readingBanner} accessibilityRole="progressbar">
+          <ActivityIndicator size="small" />
+          <Text style={styles.readingText}>Reading card… this can take up to a minute</Text>
+        </View>
+      )}
+
       {(imageUri || onRetakePhoto) && (
         <View style={styles.imageBlock}>
           <View style={styles.imageHeader}>
@@ -256,18 +282,18 @@ export default function CardForm({
       />
       {reviewModal}
 
-      <Field label="First name" value={firstName} onChangeText={setFirstName} />
-      <Field label="Last name" value={lastName} onChangeText={setLastName} />
-      <Field label="Job title" value={jobTitle} onChangeText={setJobTitle} />
-      <Field label="Company" value={company} onChangeText={setCompany} />
-      <Field
+      <Field editable={!reading} label="First name" value={firstName} onChangeText={setFirstName} />
+      <Field editable={!reading} label="Last name" value={lastName} onChangeText={setLastName} />
+      <Field editable={!reading} label="Job title" value={jobTitle} onChangeText={setJobTitle} />
+      <Field editable={!reading} label="Company" value={company} onChangeText={setCompany} />
+      <Field editable={!reading}
         label="Phone(s)"
         value={phonesText}
         onChangeText={setPhonesText}
         placeholder="comma separated"
         keyboardType="phone-pad"
       />
-      <Field
+      <Field editable={!reading}
         label="Email(s)"
         value={emailsText}
         onChangeText={setEmailsText}
@@ -276,7 +302,7 @@ export default function CardForm({
         autoCapitalize="none"
         autoCorrect={false}
       />
-      <Field
+      <Field editable={!reading}
         label="Website"
         value={website}
         onChangeText={setWebsite}
@@ -284,19 +310,25 @@ export default function CardForm({
         autoCapitalize="none"
         autoCorrect={false}
       />
-      <Field label="Address" value={address} onChangeText={setAddress} />
-      <Field label="Tags" value={tagsText} onChangeText={setTagsText} placeholder="comma separated" />
-      <Field label="Notes" value={notes} onChangeText={setNotes} multiline />
+      <Field editable={!reading} label="Address" value={address} onChangeText={setAddress} />
+      <Field editable={!reading} label="Tags" value={tagsText} onChangeText={setTagsText} placeholder="comma separated" />
+      <Field editable={!reading} label="Notes" value={notes} onChangeText={setNotes} multiline />
 
       <Button
-        style={styles.saveButton}
+        style={[styles.saveButton, reading && styles.saveButtonDisabled]}
         onPress={handleSave}
-        disabled={saving}
+        disabled={saving || reading}
         accessibilityLabel={saveLabel}
         accessibilityState={{ busy: saving }}
       >
         {saving ? <ActivityIndicator color="#fff" /> : <Text style={styles.saveButtonText}>{saveLabel}</Text>}
       </Button>
+
+      {secondaryAction && (
+        <Button style={styles.extraButton} onPress={secondaryAction.onPress}>
+          <Text style={styles.retakeText}>{secondaryAction.label}</Text>
+        </Button>
+      )}
 
       {extraAction && (
         <Button style={styles.extraButton} onPress={extraAction.onPress}>
@@ -318,6 +350,7 @@ function Field(props: {
   keyboardType?: 'default' | 'email-address' | 'phone-pad' | 'url';
   autoCapitalize?: 'none' | 'sentences' | 'words';
   autoCorrect?: boolean;
+  editable: boolean;
 }) {
   return (
     <View style={styles.field}>
@@ -328,6 +361,7 @@ function Field(props: {
         onChangeText={props.onChangeText}
         placeholder={props.placeholder}
         multiline={props.multiline}
+        editable={props.editable}
         keyboardType={props.keyboardType}
         autoCapitalize={props.autoCapitalize}
         autoCorrect={props.autoCorrect}
@@ -342,6 +376,16 @@ function Field(props: {
 
 const styles = StyleSheet.create({
   container: { padding: 20, gap: 4, paddingBottom: 48 },
+  readingBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    padding: 12,
+    marginBottom: 12,
+    borderRadius: 10,
+    backgroundColor: '#eef5ff',
+  },
+  readingText: { color: '#345', fontSize: 14, flexShrink: 1 },
   imageBlock: { marginBottom: 16 },
   imageHeader: {
     flexDirection: 'row',
@@ -366,6 +410,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginTop: 12,
   },
+  saveButtonDisabled: { opacity: 0.4 },
   saveButtonText: { color: '#fff', fontWeight: '700', fontSize: 16 },
   extraButton: { alignItems: 'center', marginTop: 16 },
   extraButtonText: { fontSize: 15, color: '#666' },
