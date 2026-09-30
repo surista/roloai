@@ -16,6 +16,10 @@
     "deploy:ios": "npm run version:bug && cd mobile && eas build --platform ios --profile production --local && eas submit --platform ios --profile production --path \"$(ls -t build-*.ipa 2>/dev/null | head -1)\"",
     "version:bug": "node scripts/version.js bug",
     "version:minor": "node scripts/version.js minor",
-    "version:major": "node scripts/version.js major"
+    "version:major": "node scripts/version.js major",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "vitest": "^4.1.11"
   }
 }

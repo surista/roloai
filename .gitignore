@@ -25,3 +25,6 @@ functions/lib/
 
 # Working data for the one-off CamCard import: contact details and card photos, not source.
 .camcard-import/
+
+# The raw CamCard export itself: hundreds of contacts plus session-authenticated photo URLs.
+Export Business Card Image*.xlsx

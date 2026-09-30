@@ -32,6 +32,11 @@ export interface Card {
   thumbUrl?: string;
   source: CardSource;
   rawOcrText?: string;
+  /**
+   * The id of this person's card in the other script (their Japanese card if this is English,
+   * or the reverse). Set on both cards; see pairing.ts, which ignores a link that isn't mutual.
+   */
+  pairedWith?: string;
   createdAt: number;
   updatedAt: number;
 }
@@ -209,3 +214,19 @@ export function sortCards(cards: Card[], sort: CardSort): Card[] {
 }
 
 export { cardToVCard, cardsToVCard, parseVCards } from './vcard';
+export { findDuplicates, identityKeys, sharedAddresses, isJapanese, nameKey, scriptOf } from './dedupe';
+export type { DuplicateMatch } from './dedupe';
+export { allTags, companyCounts, filterCards, foldText, matchesSearch } from './search';
+export type { CardFilter } from './search';
+export { groupPairs, pairCandidates, partnerOf } from './pairing';
+export type { ListEntry } from './pairing';
+export { cardsToCsv } from './csv';
+export { mergeFrontBack } from './merge';
+export {
+  BACKUP_FORMAT_VERSION,
+  BackupFormatError,
+  backupFileName,
+  cardsToBackup,
+  parseBackup,
+  vCardFileName,
+} from './backup';

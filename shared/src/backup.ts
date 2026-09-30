@@ -1,4 +1,4 @@
-import type { Card } from '@roloai/shared';
+import type { Card } from './index';
 
 /**
  * The JSON backup envelope.
@@ -71,21 +71,4 @@ export function backupFileName(date: Date): string {
 
 export function vCardFileName(date: Date): string {
   return `roloai-contacts-${isoDate(date)}.vcf`;
-}
-
-/**
- * Hands the file to the browser's download flow.
- *
- * The object URL is revoked on the next tick rather than immediately: revoking synchronously
- * after click() races the download in Safari and produces an empty file.
- */
-export function downloadFile(fileName: string, contents: string, mimeType: string): void {
-  const url = URL.createObjectURL(new Blob([contents], { type: mimeType }));
-  const link = document.createElement('a');
-  link.href = url;
-  link.download = fileName;
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 0);
 }
