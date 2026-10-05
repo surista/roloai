@@ -5,6 +5,12 @@ public class CardScannerModule: Module {
   public func definition() -> ModuleDefinition {
     Name("CardScanner")
 
+    // Load Vision's text models in the background as the app starts, so the first scan of a
+    // session (or of a new install) does not pay for it between the shutter and the review.
+    OnCreate {
+      CardScannerViewController.warmUpTextRecognition()
+    }
+
     /**
      Presents the card scanner and resolves with `{ status, uri? }`:
 

@@ -41,7 +41,10 @@ export async function extractCard(
 ): Promise<CardDraft> {
   let data: CardExtractionResult;
   try {
-    data = (await extractCardCallable({ frontImageBase64, backImageBase64 })).data;
+    data = (await extractCardCallable(
+        // Left out entirely when absent: the client would otherwise send it as null.
+        backImageBase64 ? { frontImageBase64, backImageBase64 } : { frontImageBase64 }
+      )).data;
   } catch (e) {
     if (e instanceof FunctionsError && USER_FACING_CODES.has(e.code)) {
       throw new CardExtractionError(e.message);

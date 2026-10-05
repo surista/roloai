@@ -56,7 +56,9 @@ export const extractCard = onCall<ExtractCardRequest>(
     if (frontImageBase64.length > MAX_IMAGE_BASE64_LENGTH) {
       throw new HttpsError('invalid-argument', 'Image is too large.');
     }
-    if (backImageBase64 !== undefined) {
+    // The Firebase client serialises an omitted field as null, so null means "no back image" just
+    // as undefined does; only a present value has to be a string.
+    if (backImageBase64 != null) {
       if (typeof backImageBase64 !== 'string') {
         throw new HttpsError('invalid-argument', 'backImageBase64 must be a string.');
       }

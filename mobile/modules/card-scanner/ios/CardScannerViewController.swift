@@ -36,6 +36,10 @@ final class CardScannerViewController: UIViewController {
   /// taken: frames come off the video stream rather than AVCapturePhotoOutput, so iOS plays no
   /// shutter sound, and without a visual cue the capture is completely silent and invisible.
   private let flashView = UIView()
+  /// Shown from the moment of capture until the scanner dismisses. Cropping, orientation
+  /// detection and encoding take a moment (far longer the first time on a freshly installed
+  /// build), and a frozen camera with no sign of life reads as a hang.
+  private let spinner = UIActivityIndicatorView(style: .large)
 
   /// Held so the frame callback can ask whether the lens is still hunting. Reading
   /// `isAdjustingFocus` is the only way to know; a quad can sit perfectly still while the
@@ -72,6 +76,13 @@ final class CardScannerViewController: UIViewController {
   private static let flashOutDuration: TimeInterval = 0.22
 
   private static let ciContext = CIContext()
+  /// Orientation detection runs here, off the video queue, so it can be abandoned on a timeout.
+  private static let ocrQueue = DispatchQueue(label: "com.roloai.cardscanner.ocr", qos: .userInitiated)
+  /// The longest a capture will wait for orientation detection before trusting the card's shape.
+  private static let orientationTimeout: DispatchTimeInterval = .milliseconds(2500)
+  /// Long side of the copy orientation detection reads. It only has to tell right-way-up from
+  /// upside-down, which a 1000px copy answers as well as a 12MP one in a fraction of the time.
+  private static let orientationProbeSize: CGFloat = 1000
 
   // MARK: - Lifecycle
 
@@ -79,6 +90,7 @@ final class CardScannerViewController: UIViewController {
     super.viewDidLoad()
     view.backgroundColor = .black
     configureInterface()
+    Self.warmUpTextRecognition()
     sessionQueue.async { [weak self] in
       guard let self, self.configureSession() else { return }
       self.session.startRunning()
@@ -141,7 +153,14 @@ final class CardScannerViewController: UIViewController {
     flashView.isUserInteractionEnabled = false
     view.addSubview(flashView)
 
+    spinner.color = .white
+    spinner.hidesWhenStopped = true
+    spinner.translatesAutoresizingMaskIntoConstraints = false
+    view.addSubview(spinner)
+
     NSLayoutConstraint.activate([
+      spinner.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+      spinner.centerYAnchor.constraint(equalTo: view.centerYAnchor),
       hintLabel.centerXAnchor.constraint(equalTo: view.centerXAnchor),
       hintLabel.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor, constant: 24),
       hintLabel.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -24),
@@ -258,6 +277,7 @@ final class CardScannerViewController: UIViewController {
       self?.lastQuad = nil
     }
     DispatchQueue.main.async { [weak self] in
+      self?.spinner.stopAnimating()
       self?.hintLabel.text = "Couldn't read that one — try again"
     }
   }
@@ -331,7 +351,11 @@ extension CardScannerViewController: AVCaptureVideoDataOutputSampleBufferDelegat
     // Flash first. This is the shutter moment as the user experiences it, and the crop and
     // encode below take long enough that playing it afterwards would read as lag.
     let flashEndsAt = DispatchTime.now() + Self.flashInDuration + Self.flashOutDuration
-    DispatchQueue.main.async { [weak self] in self?.playCaptureFlash() }
+    DispatchQueue.main.async { [weak self] in
+      self?.playCaptureFlash()
+      self?.hintLabel.text = "Processing…"
+      self?.spinner.startAnimating()
+    }
 
     // The frame the quad was measured on, so its corners already describe this exact image.
     // The old path re-detected on a separately captured still, which could disagree with the
@@ -430,14 +454,74 @@ extension CardScannerViewController {
   /// Only two orientations are tested, not four: shape rules the other two out before Vision is
   /// asked, and each test is an OCR pass between the shutter flash and the review sheet.
   private static func uprightCard(_ image: CIImage) -> CIImage {
+    // The crop is a lazy filter chain; handing it to Vision directly re-runs the perspective
+    // correction at full resolution for every request. Render it once and work from that.
+    let base = ciContext.createCGImage(image, from: image.extent).map { CIImage(cgImage: $0) } ?? image
+
     // The margin keeps near-square crops out of the side-on branch, where shape proves nothing.
-    let candidates = image.extent.height > image.extent.width * 1.15
-      ? [image.oriented(.right), image.oriented(.left)]
-      : [image, image.oriented(.down)]
+    let candidates = base.extent.height > base.extent.width * 1.15
+      ? [base.oriented(.right), base.oriented(.left)]
+      : [base, base.oriented(.down)]
+
     // A card with no text Vision can read scores zero both ways and keeps the first candidate,
-    // which is the better guess from shape alone.
-    return legibility(of: candidates[1]) > legibility(of: candidates[0]) ? candidates[1] : candidates[0]
+    // which is the better guess from shape alone. So does one where detection takes too long:
+    // the first run on a freshly installed build compiles Vision's models, which can take far
+    // longer than a capture should wait. The work carries on in the background and warms the
+    // models for the next scan.
+    let probes = candidates.map { probeCopy(of: $0) }
+    let outcome = OrientationOutcome()
+    let finished = DispatchSemaphore(value: 0)
+    ocrQueue.async {
+      outcome.useSecond = legibility(of: probes[1]) > legibility(of: probes[0])
+      finished.signal()
+    }
+    guard finished.wait(timeout: .now() + orientationTimeout) == .success else {
+      return candidates[0]
+    }
+    return outcome.useSecond ? candidates[1] : candidates[0]
   }
+
+  /// A small copy of `image`, for orientation detection only.
+  private static func probeCopy(of image: CIImage) -> CIImage {
+    let longSide = max(image.extent.width, image.extent.height)
+    guard longSide > orientationProbeSize else { return image }
+    let scale = orientationProbeSize / longSide
+    return image.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
+  }
+
+  /// Carries the orientation verdict out of the OCR queue. Only read after the queue has
+  /// signalled, so there is never a concurrent read and write.
+  private final class OrientationOutcome: @unchecked Sendable {
+    var useSecond = false
+  }
+
+  /// Runs one small text request at launch of the scanner so Vision's models are loaded (and,
+  /// on a new install, compiled) while the user is still pointing the camera, not when they
+  /// have just taken the shot. Safe to call repeatedly; only the first does anything.
+  static func warmUpTextRecognition() {
+    _ = warmUpOnce
+  }
+
+  /// A lazily initialised static runs its initialiser exactly once, on whichever thread asks
+  /// first, which is the once-only guarantee wanted here.
+  private static let warmUpOnce: Void = {
+    ocrQueue.async {
+      let size = CGSize(width: 400, height: 120)
+      let image = UIGraphicsImageRenderer(size: size).image { context in
+        UIColor.white.setFill()
+        context.fill(CGRect(origin: .zero, size: size))
+        ("Warm up 0123 Rolo" as NSString).draw(
+          at: CGPoint(x: 12, y: 30),
+          withAttributes: [.font: UIFont.systemFont(ofSize: 44), .foregroundColor: UIColor.black]
+        )
+      }
+      guard let cgImage = image.cgImage else { return }
+      let request = VNRecognizeTextRequest()
+      request.recognitionLevel = .fast
+      request.usesLanguageCorrection = false
+      try? VNImageRequestHandler(cgImage: cgImage, options: [:]).perform([request])
+    }
+  }()
 
   /// Summed confidence of whatever text Vision picks out. Only ever compared against the same
   /// image at the opposite rotation, so the absolute number means nothing on its own.
