@@ -1,10 +1,10 @@
 import React, { useEffect, useState } from 'react';
 import { Alert } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
-import type { CardDraft } from '@roloai/shared';
+import { myCardOf, type CardDraft } from '@roloai/shared';
 import type { RootStackParamList } from '../navigation/types';
 import CardForm from '../components/CardForm';
-import { createCard } from '../lib/cards';
+import { createCard, fetchAllCards, saveScannedMyCard } from '../lib/cards';
 import { confirmNoDuplicate } from '../lib/duplicateCheck';
 import { CardExtractionError } from '../lib/functions';
 import { forgetPhotos, readCard } from '../lib/scanReader';
@@ -30,7 +30,7 @@ const BLANK_DRAFT: CardDraft = {
  * fields fill in when Claude answers.
  */
 export default function ReviewEditScreen({ route, navigation }: Props) {
-  const { scan, localImageUri, localBackImageUri, queuedId } = route.params;
+  const { scan, localImageUri, localBackImageUri, queuedId, mine } = route.params;
   const [draft, setDraft] = useState<CardDraft | undefined>(route.params.draft);
   const [images, setImages] = useState({
     front: localImageUri ?? scan?.frontUri,
@@ -75,7 +75,7 @@ export default function ReviewEditScreen({ route, navigation }: Props) {
         ];
         // Queueing helps when the network is the problem; a too-much-text failure would just
         // fail again later. A scan that is already queued stays queued if the user backs out.
-        if (!(e instanceof CardExtractionError) && !queuedId) {
+        if (!(e instanceof CardExtractionError) && !queuedId && !mine) {
           buttons.push({ text: 'Save for later', onPress: () => void saveForLater() });
         }
         Alert.alert(
@@ -118,11 +118,18 @@ export default function ReviewEditScreen({ route, navigation }: Props) {
       reading={!draft}
       imageUri={images.front}
       backImageUri={images.back}
-      saveLabel="Save Card"
+      saveLabel={mine ? 'Save as My Card' : 'Save Card'}
       extraAction={
         queuedId ? { label: 'Discard scan', onPress: discardQueued, destructive: true } : undefined
       }
       onSave={async (fields) => {
+        if (mine) {
+          // Your own card is not a duplicate of anyone, and replaces the one already set.
+          const existing = myCardOf(await fetchAllCards());
+          await saveScannedMyCard(existing, fields, draft?.rawOcrText, images.front, images.back);
+          navigation.navigate('MyCard');
+          return;
+        }
         await confirmNoDuplicate(fields, (cardId) =>
           navigation.navigate('CardDetail', { cardId })
         );

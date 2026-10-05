@@ -2,7 +2,8 @@ import type { CardDraft } from '@roloai/shared';
 
 export type RootStackParamList = {
   CardList: undefined;
-  Scan: undefined;
+  /** `mine` scans the owner's own card: the result replaces My Card instead of joining the library. */
+  Scan: { mine?: boolean } | undefined;
   Settings: undefined;
   MyCard: undefined;
   /**
@@ -16,6 +17,8 @@ export type RootStackParamList = {
     localBackImageUri?: string;
     /** Set when reading a scan from the offline queue; the item is removed once it is saved or discarded. */
     queuedId?: string;
+    /** The scan is the owner's own card; Save replaces My Card. */
+    mine?: boolean;
   };
   CardDetail: { cardId: string };
 };

@@ -17,6 +17,7 @@ import { deleteObject, getDownloadURL, ref, uploadBytes } from 'firebase/storage
 import { cardFromFirestore, stripUndefined, type Card, type CardDraft } from '@roloai/shared';
 import { db, storage } from './firebase';
 import { makeThumbnail, renderForUpload } from './documentScanner';
+import type { CardFormFields } from '../components/CardForm';
 
 const cardsCollection = collection(db, 'cards');
 
@@ -332,4 +333,58 @@ export async function setMyCard(id: string): Promise<void> {
 /** Stops treating `id` as the owner's card; it becomes an ordinary card in the list. */
 export async function clearMyCard(id: string): Promise<void> {
   await updateDoc(doc(db, 'cards', id), { isMine: deleteField(), updatedAt: serverTimestamp() });
+}
+
+/**
+ * Saves a scan as the owner's card.
+ *
+ * With no My Card yet this is an ordinary create flagged isMine. With one, the scan replaces its
+ * details and photos in place — a second card for the same person would leave a stray copy of
+ * the owner in the library. New photos are uploaded first so a failed upload leaves the old card
+ * untouched, and the old files are removed only after the document points at the new ones.
+ */
+export async function saveScannedMyCard(
+  existing: Card | undefined,
+  fields: CardFormFields,
+  rawOcrText: string | undefined,
+  frontUri?: string,
+  backUri?: string
+): Promise<string> {
+  if (!existing) {
+    return createCard(
+      { ...fields, imageUrl: '', source: 'scan', rawOcrText, isMine: true },
+      frontUri,
+      backUri
+    );
+  }
+
+  const settled = await Promise.allSettled([
+    frontUri ? uploadFrontWithThumbnail(existing.id, frontUri) : undefined,
+    backUri ? uploadCardImage(existing.id, backUri, 'back') : undefined,
+  ]);
+  const failure = settled.find((r): r is PromiseRejectedResult => r.status === 'rejected');
+  if (failure) {
+    await Promise.all(fulfilledUrls(settled).map(deleteImageByUrl));
+    throw failure.reason;
+  }
+  const front = (settled[0] as PromiseFulfilledResult<{ imageUrl: string; thumbUrl: string } | undefined>).value;
+  const backUrl = (settled[1] as PromiseFulfilledResult<string | undefined>).value;
+
+  await updateDoc(doc(db, 'cards', existing.id), {
+    ...toUpdatePayload(fields),
+    rawOcrText: rawOcrText ?? deleteField(),
+    source: 'scan',
+    ...(front ? { imageUrl: front.imageUrl, thumbUrl: front.thumbUrl } : {}),
+    // A fresh scan with no back means the old back belonged to the old card.
+    imageBackUrl: backUrl ?? deleteField(),
+    updatedAt: serverTimestamp(),
+  });
+
+  const replaced = [
+    front ? existing.imageUrl : undefined,
+    front ? existing.thumbUrl : undefined,
+    existing.imageBackUrl,
+  ];
+  await Promise.all(replaced.filter((url): url is string => Boolean(url)).map(deleteImageByUrl));
+  return existing.id;
 }

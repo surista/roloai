@@ -15,7 +15,8 @@ import { alertForScanFailure, alertForCameraPermissionDenied } from '../lib/came
 type Props = NativeStackScreenProps<RootStackParamList, 'Scan'>;
 type Mode = 'photo' | 'qr';
 
-export default function ScanScreen({ navigation }: Props) {
+export default function ScanScreen({ navigation, route }: Props) {
+  const mine = route.params?.mine;
   const [permission, requestPermission] = useCameraPermissions();
   const insets = useSafeAreaInsets();
   const [mode, setMode] = useState<Mode>('photo');
@@ -40,6 +41,7 @@ export default function ScanScreen({ navigation }: Props) {
   const finishWithPhotos = (frontPhotoUri: string, backPhotoUri?: string) => {
     navigation.navigate('ReviewEdit', {
       scan: { frontUri: frontPhotoUri, backUri: backPhotoUri },
+      mine,
     });
   };
 
@@ -158,7 +160,7 @@ export default function ScanScreen({ navigation }: Props) {
 
       {/* Hidden mid-capture: switching to QR would silently discard the front photo. */}
       <View
-        style={[styles.modeSwitch, { top: insets.top + 8 }, frontUri && styles.hidden]}
+        style={[styles.modeSwitch, { top: insets.top + 8 }, (frontUri || mine) && styles.hidden]}
       >
         <Button
           style={[styles.modeButton, mode === 'photo' && styles.modeButtonActive]}

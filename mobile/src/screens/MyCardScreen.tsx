@@ -62,6 +62,14 @@ export default function MyCardScreen({ navigation }: Props) {
     });
   }, [stored, seeded]);
 
+  // A rescan (or an edit on another device) changes the saved card while this screen is open.
+  // Follow it unless there are unsaved edits, which must not be overwritten.
+  useEffect(() => {
+    if (seeded && !dirty && stored) setForm(myCardFromCard(stored));
+    // Only the stored card's changes should trigger this, not the user's typing.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stored]);
+
   const update = (key: keyof MyCard, value: string) => {
     setForm((f) => ({ ...f, [key]: value }));
     setDirty(true);
@@ -99,6 +107,17 @@ export default function MyCardScreen({ navigation }: Props) {
       keyboardShouldPersistTaps="handled"
       automaticallyAdjustKeyboardInsets
     >
+      <Button
+        style={styles.scanButton}
+        onPress={() => navigation.navigate('Scan', { mine: true })}
+        accessibilityLabel="Scan my card"
+      >
+        <Text style={styles.scanText}>{stored ? 'Rescan my card' : 'Scan my card'}</Text>
+      </Button>
+      <Text style={styles.hint}>
+        Photograph your business card to fill this in{stored ? ' again (replaces what is saved)' : ''}, or type it below.
+      </Text>
+
       {FIELDS.map(({ key, label, keyboard }) => (
         <View key={key} style={styles.field}>
           <Text style={styles.label}>{label}</Text>
@@ -177,6 +196,13 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginTop: 4,
   },
+  scanButton: {
+    backgroundColor: '#111',
+    borderRadius: 10,
+    padding: 16,
+    alignItems: 'center',
+  },
+  scanText: { color: '#fff', fontWeight: '700', fontSize: 16 },
   photosButton: { padding: 12, alignItems: 'center' },
   photosText: { color: '#0a7cff', fontWeight: '600', fontSize: 16 },
   disabled: { opacity: 0.4 },
