@@ -76,6 +76,8 @@ final class CardScannerViewController: UIViewController {
   private static let flashOutDuration: TimeInterval = 0.22
 
   private static let ciContext = CIContext()
+  /// Long side of the copy live edge detection reads; the capture itself uses the full frame.
+  private static let detectionLongSide: CGFloat = 1280
   /// Orientation detection runs here, off the video queue, so it can be abandoned on a timeout.
   private static let ocrQueue = DispatchQueue(label: "com.roloai.cardscanner.ocr", qos: .userInitiated)
   /// The longest a capture will wait for orientation detection before trusting the card's shape.
@@ -202,6 +204,18 @@ final class CardScannerViewController: UIViewController {
     // Only unlock if the lock was actually taken — unlocking a device you don't hold is
     // undefined per AVFoundation's contract.
     if (try? device.lockForConfiguration()) != nil {
+      // The .photo preset makes the preview and the video frames about 1440x1080 whatever the
+      // sensor can do (the full-resolution still is for AVCapturePhotoOutput, which is not
+      // used here). A card filling half the frame then crops to ~650px wide and looks soft on
+      // any big screen. Asking for the sensor's full 4:3 video format puts a 12MP frame in
+      // every capture; setting activeFormat switches the session to input-priority itself.
+      if let format = Self.sharpestVideoFormat(for: device) {
+        device.activeFormat = format
+        if format.videoSupportedFrameRateRanges.contains(where: { $0.maxFrameRate >= 30 }) {
+          device.activeVideoMinFrameDuration = CMTime(value: 1, timescale: 30)
+          device.activeVideoMaxFrameDuration = CMTime(value: 1, timescale: 30)
+        }
+      }
       if device.isFocusModeSupported(.continuousAutoFocus) {
         device.focusMode = .continuousAutoFocus
       }
@@ -211,6 +225,23 @@ final class CardScannerViewController: UIViewController {
       device.unlockForConfiguration()
     }
     return true
+  }
+
+  /// The largest 4:3 video format the camera offers at a usable frame rate, capped at 12MP:
+  /// the 48MP formats on recent Pro models run slowly, and a card never needs them.
+  private static func sharpestVideoFormat(for device: AVCaptureDevice) -> AVCaptureDevice.Format? {
+    func pixels(_ format: AVCaptureDevice.Format) -> Int32 {
+      let size = CMVideoFormatDescriptionGetDimensions(format.formatDescription)
+      return size.width * size.height
+    }
+    return device.formats
+      .filter { format in
+        let size = CMVideoFormatDescriptionGetDimensions(format.formatDescription)
+        let isFourByThree = abs(Double(size.width) / Double(size.height) - 4.0 / 3.0) < 0.01
+        let fastEnough = format.videoSupportedFrameRateRanges.contains { $0.maxFrameRate >= 24 }
+        return isFourByThree && fastEnough && size.width <= 4032
+      }
+      .max { pixels($0) < pixels($1) }
   }
 
   // MARK: - Result
@@ -304,9 +335,15 @@ extension CardScannerViewController: AVCaptureVideoDataOutputSampleBufferDelegat
     streamStartedAt = startedAt
 
     let request = VNDetectDocumentSegmentationRequest()
+    // Detection reads a small copy: at 12MP it would run on a fraction of the frames, and the
+    // quad it finds is normalised, so it maps onto the full-size buffer unchanged.
+    let longSide = CGFloat(max(CVPixelBufferGetWidth(buffer), CVPixelBufferGetHeight(buffer)))
+    let scale = min(1, Self.detectionLongSide / longSide)
+    let detectionImage = CIImage(cvPixelBuffer: buffer)
+      .transformed(by: CGAffineTransform(scaleX: scale, y: scale))
     // The app is portrait-locked and uses the back camera, so buffers arrive rotated a quarter
     // turn from upright.
-    let handler = VNImageRequestHandler(cvPixelBuffer: buffer, orientation: .right, options: [:])
+    let handler = VNImageRequestHandler(ciImage: detectionImage, orientation: .right, options: [:])
     try? handler.perform([request])
 
     guard let quad = request.results?.first,
