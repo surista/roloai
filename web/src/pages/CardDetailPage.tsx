@@ -4,38 +4,26 @@ import { doc, onSnapshot } from 'firebase/firestore';
 import {
   cardFromFirestore,
   cardImageUrls,
-  cardToVCard,
   findDuplicates,
   pairCandidates,
   partnerOf,
+  withoutMine,
   type Card,
 } from '@roloai/shared';
 import { db } from '../lib/firebase';
-import { deleteCard, linkCards, subscribeToCards, unlinkCards, updateCard } from '../lib/cards';
-import { downloadFile } from '../lib/backup';
+import {
+  clearMyCard,
+  deleteCard,
+  linkCards,
+  setMyCard,
+  subscribeToCards,
+  unlinkCards,
+  updateCard,
+} from '../lib/cards';
 import CardForm from '../components/CardForm';
+import ShareMenu from '../components/ShareMenu';
 
 const displayName = (card: Card): string => `${card.firstName} ${card.lastName}`.trim();
-
-/**
- * Hands one card to the OS share sheet as a .vcf file where the browser can, and falls back to
- * a plain download where it can't (desktop Chrome/Firefox have no file sharing).
- */
-async function shareCard(card: Card): Promise<void> {
-  const fileName = `${displayName(card).replace(/[\\/:*?"<>|\s]+/g, '-') || 'contact'}.vcf`;
-  const vcf = cardToVCard(card);
-  const file = new File([vcf], fileName, { type: 'text/vcard' });
-  if (navigator.canShare?.({ files: [file] })) {
-    try {
-      await navigator.share({ files: [file], title: displayName(card) });
-    } catch (e) {
-      // Dismissing the share sheet rejects with AbortError; that is not a failure.
-      if ((e as Error).name !== 'AbortError') throw e;
-    }
-    return;
-  }
-  downloadFile(fileName, vcf, 'text/vcard');
-}
 
 export default function CardDetailPage() {
   const { cardId } = useParams<{ cardId: string }>();
@@ -63,7 +51,7 @@ export default function CardDetailPage() {
     () => (card ? partnerOf(card, new Map(cards.map((c) => [c.id, c]))) : undefined),
     [card, cards]
   );
-  const candidates = useMemo(() => (card ? pairCandidates(card, cards) : []), [card, cards]);
+  const candidates = useMemo(() => (card ? pairCandidates(card, withoutMine(cards)) : []), [card, cards]);
 
   if (card === undefined) return <p className="empty">Loading…</p>;
   if (card === null) return <p className="empty">Card not found.</p>;
@@ -91,9 +79,18 @@ export default function CardDetailPage() {
         <button className="link-button" onClick={() => navigate('/')}>
           ← Back
         </button>
-        <button className="link-button" onClick={() => void run(() => shareCard(card))}>
-          Share
-        </button>
+        <div className="header-actions">
+          {card.isMine ? (
+            <button className="link-button" onClick={() => void run(() => clearMyCard(card.id))}>
+              This is my card — remove
+            </button>
+          ) : (
+            <button className="link-button" onClick={() => void run(() => setMyCard(card.id))}>
+              Use as my card
+            </button>
+          )}
+          <ShareMenu card={card} />
+        </div>
       </div>
 
       {partner && (
@@ -128,7 +125,7 @@ export default function CardDetailPage() {
         backImageUrl={card.imageBackUrl || undefined}
         saveLabel="Save Changes"
         onSave={async (fields) => {
-          const duplicates = findDuplicates(fields, cards, cardId);
+          const duplicates = findDuplicates(fields, withoutMine(cards), cardId);
           if (
             duplicates.length &&
             !confirm(

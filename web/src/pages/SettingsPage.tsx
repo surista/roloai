@@ -4,6 +4,7 @@ import {
   cardsToCsv,
   cardsToVCard,
   findDuplicates,
+  withoutMine,
   parseVCards,
   type Card,
   type CardDraft,
@@ -91,7 +92,7 @@ export default function SettingsPage() {
       if (file.name.toLowerCase().endsWith('.vcf')) {
         const drafts = parseVCards(text);
         if (!drafts.length) throw new BackupFormatError('No contacts found in that file.');
-        setPending({ kind: 'vcard', fileName: file.name, drafts, ...flagDuplicates(drafts, cards) });
+        setPending({ kind: 'vcard', fileName: file.name, drafts, ...flagDuplicates(drafts, withoutMine(cards)) });
       } else {
         setPending({ kind: 'restore', fileName: file.name, cards: parseBackup(text) });
       }

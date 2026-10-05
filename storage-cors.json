@@ -1,0 +1,12 @@
+[
+  {
+    "origin": [
+      "https://roloai-be1891.web.app",
+      "https://roloai-be1891.firebaseapp.com",
+      "http://localhost:5173"
+    ],
+    "method": ["GET"],
+    "responseHeader": ["Content-Type"],
+    "maxAgeSeconds": 3600
+  }
+]

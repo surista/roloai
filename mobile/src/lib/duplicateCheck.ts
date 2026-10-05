@@ -1,5 +1,5 @@
 import { Alert } from 'react-native';
-import { findDuplicates } from '@roloai/shared';
+import { findDuplicates, withoutMine } from '@roloai/shared';
 import { fetchAllCards } from './cards';
 
 /**
@@ -44,7 +44,7 @@ export async function confirmNoDuplicate(
 ): Promise<void> {
   let matches: ReturnType<typeof findDuplicates>;
   try {
-    matches = findDuplicates(fields, await fetchAllCards(), ignoreId);
+    matches = findDuplicates(fields, withoutMine(await fetchAllCards()), ignoreId);
   } catch (e) {
     console.warn('Duplicate check skipped:', e);
     return;

@@ -53,6 +53,7 @@ export default function LoginPage() {
   return (
     <div className="login-page">
       <form className="login-form" onSubmit={handleSubmit}>
+        <img className="login-logo" src="/logo.svg" alt="" width="88" height="88" />
         <h1>RoloAI</h1>
         {/* name + autoComplete are what let the browser and password managers offer to fill
             and save these — without them the one screen with any friction has none of it. */}

@@ -2,11 +2,14 @@ import {
   deleteDoc,
   deleteField,
   doc,
+  getDocs,
   onSnapshot,
   orderBy,
   query,
   serverTimestamp,
+  setDoc,
   updateDoc,
+  where,
   writeBatch,
   collection,
 } from 'firebase/firestore';
@@ -142,4 +145,51 @@ export async function restoreCards(cards: Card[]): Promise<number> {
     const { id, ...fields } = cards[i];
     batch.set(doc(db, 'cards', id), stripUndefined(fields));
   });
+}
+
+/** The details My Card edits — the contact fields only; photos come from the phone app. */
+export type MyCardFields = Pick<
+  CardDraft,
+  'firstName' | 'lastName' | 'jobTitle' | 'company' | 'phones' | 'emails' | 'website' | 'address'
+>;
+
+/**
+ * Saves the owner's own card: updates the card flagged isMine, or creates it on first save.
+ * It is a real card document (not local state) so it syncs with the phone and keeps its photos.
+ * The lookup is a query rather than a passed-in id so a second tab can't create a duplicate.
+ */
+export async function saveMyCard(fields: MyCardFields): Promise<void> {
+  const existing = await getDocs(query(cardsCollection, where('isMine', '==', true)));
+  if (!existing.empty) {
+    await updateCard(existing.docs[0].id, fields);
+    return;
+  }
+  await setDoc(doc(cardsCollection), {
+    ...stripUndefined(fields),
+    tags: [],
+    imageUrl: '',
+    source: 'manual',
+    isMine: true,
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  });
+}
+
+/**
+ * Makes a card the owner's own. There is at most one, so the flag is cleared from every other
+ * card in the same batch — otherwise a crash in between could leave two.
+ */
+export async function setMyCard(id: string): Promise<void> {
+  const flagged = await getDocs(query(cardsCollection, where('isMine', '==', true)));
+  const batch = writeBatch(db);
+  for (const d of flagged.docs) {
+    if (d.id !== id) batch.update(d.ref, { isMine: deleteField(), updatedAt: serverTimestamp() });
+  }
+  batch.update(doc(db, 'cards', id), { isMine: true, updatedAt: serverTimestamp() });
+  await batch.commit();
+}
+
+/** Turns a card back into an ordinary one; it then appears in the main list again. */
+export async function clearMyCard(id: string): Promise<void> {
+  await updateDoc(doc(db, 'cards', id), { isMine: deleteField(), updatedAt: serverTimestamp() });
 }

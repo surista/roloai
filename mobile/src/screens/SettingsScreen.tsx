@@ -10,6 +10,7 @@ import {
   cardsToCsv,
   cardsToVCard,
   findDuplicates,
+  withoutMine,
   parseBackup,
   parseVCards,
   vCardFileName,
@@ -127,7 +128,8 @@ export default function SettingsScreen({ navigation }: Props) {
     // Unlike a backup, a vCard has no ids to match on, so importing twice would double the
     // library. Contacts that look like someone already on file — or an earlier contact in the
     // same file — are skipped; the count is reported so it is not silent.
-    const known = await fetchAllCards();
+    // Your own card is not someone to dedupe against.
+    const known = withoutMine(await fetchAllCards());
     const fresh: CardDraft[] = [];
     drafts.forEach((draft, i) => {
       if (findDuplicates(draft, known).length) return;

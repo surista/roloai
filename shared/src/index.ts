@@ -37,6 +37,12 @@ export interface Card {
    * or the reverse). Set on both cards; see pairing.ts, which ignores a link that isn't mutual.
    */
   pairedWith?: string;
+  /**
+   * True on the owner's own card, the one they hand out. At most one card has it. It lives in
+   * the library like any other card (so it syncs and carries photos), but is kept out of the
+   * main list; see mine.ts.
+   */
+  isMine?: boolean;
   createdAt: number;
   updatedAt: number;
 }
@@ -230,3 +236,4 @@ export {
   parseBackup,
   vCardFileName,
 } from './backup';
+export { cardImageFileName, myCardOf, withoutMine } from './mine';

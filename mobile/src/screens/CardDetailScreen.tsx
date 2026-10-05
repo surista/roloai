@@ -5,23 +5,25 @@ import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import {
   cardFromFirestore,
   cardImageUrls,
-  cardToVCard,
   pairCandidates,
   partnerOf,
+  withoutMine,
   type Card,
 } from '@roloai/shared';
 import type { RootStackParamList } from '../navigation/types';
 import { db } from '../lib/firebase';
 import {
+  clearMyCard,
   deleteCard,
   linkCards,
+  setMyCard,
   subscribeToCards,
   unlinkCards,
   updateCard,
   updateCardImage,
 } from '../lib/cards';
 import { confirmNoDuplicate } from '../lib/duplicateCheck';
-import { FILE_UTI, safeFileName, shareTextFile } from '../lib/shareFile';
+import { presentShareMenu } from '../lib/shareCardImages';
 import Button from '../components/Button';
 import CardForm from '../components/CardForm';
 
@@ -35,6 +37,8 @@ export default function CardDetailScreen({ route, navigation }: Props) {
   // Every card, only to find this one's pairing partner and candidates.
   const [allCards, setAllCards] = useState<Card[]>([]);
   const [linking, setLinking] = useState(false);
+  // Busy while photos download for sharing (the .vcf is instant).
+  const [sharing, setSharing] = useState(false);
 
   useEffect(() => {
     return onSnapshot(doc(db, 'cards', cardId), (snap) => {
@@ -54,7 +58,11 @@ export default function CardDetailScreen({ route, navigation }: Props) {
     // partner's (both come from the same snapshot).
     const self = allCards.find((c) => c.id === card.id) ?? card;
     const byId = new Map(allCards.map((c) => [c.id, c]));
-    return { partner: partnerOf(self, byId), candidates: pairCandidates(self, allCards) };
+    return {
+      partner: partnerOf(self, byId),
+      // Your own card is not someone to pair with (and is never paired itself).
+      candidates: self.isMine ? [] : pairCandidates(self, withoutMine(allCards)),
+    };
   }, [card, allCards]);
 
   if (!card) {
@@ -72,7 +80,7 @@ export default function CardDetailScreen({ route, navigation }: Props) {
       await action();
     } catch (e) {
       console.error('Pairing failed:', e);
-      Alert.alert('Could not update the link', 'Check your connection and try again.');
+      Alert.alert('Could not update the card', 'Check your connection and try again.');
     } finally {
       setLinking(false);
     }
@@ -92,19 +100,25 @@ export default function CardDetailScreen({ route, navigation }: Props) {
     ]);
   };
 
-  const handleShare = async () => {
-    try {
-      // The photo link is left out: it is a signed-in-only storage url, meaningless to the
-      // recipient, and carries an access token.
-      const vcard = cardToVCard({ ...card, imageUrl: '' });
-      await shareTextFile(`${safeFileName(displayName(card))}.vcf`, vcard, FILE_UTI.vcard);
-    } catch (e) {
-      console.error('Share failed:', e);
-      Alert.alert('Could not share', 'Something went wrong opening the share sheet.');
-    }
-  };
+  const handleShare = () => presentShareMenu(card, setSharing);
 
-  const header = (partner || candidates.length > 0) && (
+  const toggleMine = () =>
+    runLinking(() => (card.isMine ? clearMyCard(card.id) : setMyCard(card.id))).catch(() => {});
+
+  const mineRow = (
+    <View style={styles.mineRow}>
+      <Text style={styles.bannerText}>{card.isMine ? 'This is my card' : 'Not your own card?'}</Text>
+      <Button
+        disabled={linking}
+        onPress={toggleMine}
+        accessibilityLabel={card.isMine ? 'This is my card, remove' : 'Use as my card'}
+      >
+        <Text style={styles.bannerLink}>{card.isMine ? 'This is my card — remove' : 'Use as my card'}</Text>
+      </Button>
+    </View>
+  );
+
+  const pairing = (partner || candidates.length > 0) && (
     <View style={styles.banner}>
       {partner ? (
         <>
@@ -144,10 +158,17 @@ export default function CardDetailScreen({ route, navigation }: Props) {
     </View>
   );
 
+  const header = (
+    <>
+      {mineRow}
+      {pairing}
+    </>
+  );
+
   return (
     <CardForm
       draft={card}
-      header={header || undefined}
+      header={header}
       imageUri={card.imageUrl || undefined}
       backImageUri={card.imageBackUrl || undefined}
       saveLabel="Save Changes"
@@ -169,7 +190,7 @@ export default function CardDetailScreen({ route, navigation }: Props) {
           side === 'front' ? card.thumbUrl : undefined
         );
       }}
-      secondaryAction={{ label: 'Share', onPress: handleShare }}
+      secondaryAction={{ label: sharing ? 'Preparing photos…' : 'Share', onPress: sharing ? () => {} : handleShare }}
       extraAction={{ label: 'Delete Card', onPress: handleDelete, destructive: true }}
     />
   );
@@ -182,6 +203,12 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     backgroundColor: '#f1f8ee',
     gap: 8,
+  },
+  mineRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12,
   },
   candidate: { gap: 6 },
   bannerText: { color: '#234', fontSize: 14 },

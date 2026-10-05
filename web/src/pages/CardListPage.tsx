@@ -8,19 +8,24 @@ import {
   filterCards,
   groupPairs,
   sortCards,
+  withoutMine,
   type Card,
   type CardSort,
 } from '@roloai/shared';
 import { subscribeToCards } from '../lib/cards';
 
 export default function CardListPage() {
-  const [cards, setCards] = useState<Card[]>([]);
+  const [allCards, setAllCards] = useState<Card[]>([]);
   const [search, setSearch] = useState('');
   const [activeTag, setActiveTag] = useState<string | null>(null);
   const [company, setCompany] = useState('');
   const [sort, setSort] = useState<CardSort>('recent');
 
-  useEffect(() => subscribeToCards(setCards), []);
+  useEffect(() => subscribeToCards(setAllCards), []);
+
+  // Your own card lives under "My Card", not among the people you know, so it is kept out of
+  // the list, search, filters, option lists, pair grouping and the counts alike.
+  const cards = useMemo(() => withoutMine(allCards), [allCards]);
 
   const allTags = useMemo(() => collectTags(cards), [cards]);
   const companies = useMemo(() => companyCounts(cards), [cards]);
@@ -45,6 +50,9 @@ export default function CardListPage() {
         <h1>RoloAI</h1>
         <div className="header-actions">
           <span className="version">v{__APP_VERSION__}</span>
+          <Link className="link-button my-card-link" to="/my-card">
+            My Card
+          </Link>
           <Link className="link-button" to="/settings">
             Settings
           </Link>

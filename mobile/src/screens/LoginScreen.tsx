@@ -1,6 +1,7 @@
 import React, { useRef, useState } from 'react';
 import {
   View,
+  Image,
   Text,
   TextInput,
   StyleSheet,
@@ -71,6 +72,7 @@ export default function LoginScreen() {
         contentContainerStyle={styles.container}
         keyboardShouldPersistTaps="handled"
       >
+        <Image source={require('../../assets/icon.png')} style={styles.logo} accessibilityLabel="RoloAI" />
         <Text style={styles.title}>RoloAI</Text>
         <TextInput
           style={styles.input}
@@ -131,6 +133,7 @@ export default function LoginScreen() {
 const styles = StyleSheet.create({
   flex: { flex: 1 },
   container: { flexGrow: 1, justifyContent: 'center', padding: 24, gap: 12 },
+  logo: { width: 96, height: 96, borderRadius: 22, alignSelf: 'center', marginBottom: 16 },
   title: { fontSize: 32, fontWeight: '700', textAlign: 'center', marginBottom: 24 },
   input: {
     borderWidth: 1,

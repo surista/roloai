@@ -12,6 +12,7 @@ import {
   filterCards,
   groupPairs,
   sortCards,
+  withoutMine,
   type Card,
   type CardSort,
 } from '@roloai/shared';
@@ -29,6 +30,7 @@ const CHIP_HIT_SLOP = { top: 7, bottom: 7, left: 0, right: 0 } as const;
 
 export default function CardListScreen({ navigation }: Props) {
   const insets = useSafeAreaInsets();
+  // The owner's own card (isMine) is kept out of the library: it is reached from My Card.
   const [cards, setCards] = useState<Card[]>([]);
   const [search, setSearch] = useState('');
   const [sort, setSort] = useState<CardSort>('recent');
@@ -36,7 +38,7 @@ export default function CardListScreen({ navigation }: Props) {
   const [company, setCompany] = useState<string | undefined>();
   const [queue, setQueue] = useState<QueuedScan[]>([]);
 
-  useEffect(() => subscribeToCards(setCards), []);
+  useEffect(() => subscribeToCards((all) => setCards(withoutMine(all))), []);
 
   // Refreshed on focus: scans are queued and drained on other screens, and coming back here is
   // the only time the count can have changed.
@@ -87,6 +89,13 @@ export default function CardListScreen({ navigation }: Props) {
         <View style={styles.headerActions}>
           {/* Sign out moved into Settings: it sat one stray tap from the search field, and the
               account it signs out of was never named anywhere in the app. */}
+          <Button
+            style={styles.myCardButton}
+            onPress={() => navigation.navigate('MyCard')}
+            accessibilityLabel="My Card"
+          >
+            <Text style={styles.myCardText}>My Card</Text>
+          </Button>
           <Button
             onPress={() => navigation.navigate('Settings')}
             accessibilityLabel="Settings"
@@ -287,6 +296,13 @@ const styles = StyleSheet.create({
     padding: 10,
   },
   headerActions: { alignItems: 'flex-end', gap: 2 },
+  myCardButton: {
+    backgroundColor: '#111',
+    borderRadius: 999,
+    paddingVertical: 6,
+    paddingHorizontal: 14,
+  },
+  myCardText: { color: '#fff', fontWeight: '600', fontSize: 13 },
   settingsLink: { color: '#0a7cff', fontWeight: '600' },
   version: { color: '#888', fontSize: 11 },
   sortRow: { paddingHorizontal: 16, gap: 8, alignItems: 'center' },

@@ -295,3 +295,41 @@ export async function restoreCards(cards: Card[]): Promise<number> {
     batch.set(doc(db, 'cards', id), stripUndefined(fields));
   });
 }
+
+/**
+ * Saves the owner's own card: updates the existing isMine doc, or creates one. Stored as a real
+ * card so it syncs between devices and can carry photos; the list screens filter it out.
+ */
+export async function saveMyCard(fields: Partial<CardDraft>, existingId?: string): Promise<string> {
+  if (existingId) {
+    await updateCard(existingId, fields);
+    return existingId;
+  }
+  const docRef = doc(cardsCollection);
+  await setDoc(docRef, {
+    ...stripUndefined(fields),
+    tags: [],
+    imageUrl: '',
+    source: 'manual',
+    isMine: true,
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  });
+  return docRef.id;
+}
+
+/** Makes `id` the owner's card, clearing the flag on any other in the same batch (at most one). */
+export async function setMyCard(id: string): Promise<void> {
+  const snapshot = await getDocs(cardsCollection);
+  const batch = writeBatch(db);
+  for (const d of snapshot.docs) {
+    if (d.id !== id && d.data().isMine) batch.update(d.ref, { isMine: deleteField() });
+  }
+  batch.update(doc(db, 'cards', id), { isMine: true, updatedAt: serverTimestamp() });
+  await batch.commit();
+}
+
+/** Stops treating `id` as the owner's card; it becomes an ordinary card in the list. */
+export async function clearMyCard(id: string): Promise<void> {
+  await updateDoc(doc(db, 'cards', id), { isMine: deleteField(), updatedAt: serverTimestamp() });
+}
