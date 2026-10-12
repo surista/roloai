@@ -542,7 +542,10 @@ extension CardScannerViewController {
   /// A lazily initialised static runs its initialiser exactly once, on whichever thread asks
   /// first, which is the once-only guarantee wanted here.
   private static let warmUpOnce: Void = {
-    ocrQueue.async {
+    // Low priority and a few seconds late: this is kicked off as the app launches, and the first
+    // run on a new install compiles models for a long time. Starting it at once competed with the
+    // app's own startup (sign-in, loading the library, decoding thumbnails) and slowed the open.
+    DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 6) {
       let size = CGSize(width: 400, height: 120)
       let image = UIGraphicsImageRenderer(size: size).image { context in
         UIColor.white.setFill()

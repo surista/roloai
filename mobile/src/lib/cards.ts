@@ -60,7 +60,13 @@ async function uploadTo(path: string, localUri: string): Promise<string> {
   const response = await fetch(localUri);
   const blob = await response.blob();
   const imageRef = ref(storage, path);
-  await uploadBytes(imageRef, blob);
+  // Without these the file is stored as application/octet-stream with no cache header, so the
+  // phone re-downloads every photo each time. The path carries a timestamp and is never
+  // overwritten, so the copy can be kept for a year.
+  await uploadBytes(imageRef, blob, {
+    contentType: 'image/jpeg',
+    cacheControl: 'public,max-age=31536000,immutable',
+  });
   return getDownloadURL(imageRef);
 }
 

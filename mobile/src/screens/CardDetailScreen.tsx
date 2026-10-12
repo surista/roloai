@@ -1,9 +1,7 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { View, Text, ActivityIndicator, Alert, StyleSheet } from 'react-native';
-import { doc, onSnapshot } from 'firebase/firestore';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import {
-  cardFromFirestore,
   cardImageUrls,
   pairCandidates,
   partnerOf,
@@ -11,13 +9,12 @@ import {
   type Card,
 } from '@roloai/shared';
 import type { RootStackParamList } from '../navigation/types';
-import { db } from '../lib/firebase';
+import { useCards } from '../lib/CardsContext';
 import {
   clearMyCard,
   deleteCard,
   linkCards,
   setMyCard,
-  subscribeToCards,
   unlinkCards,
   updateCard,
   updateCardImage,
@@ -33,24 +30,12 @@ const displayName = (c: Card) => `${c.firstName} ${c.lastName}`.trim() || 'Unnam
 
 export default function CardDetailScreen({ route, navigation }: Props) {
   const { cardId } = route.params;
-  const [card, setCard] = useState<Card | null>(null);
-  // Every card, only to find this one's pairing partner and candidates.
-  const [allCards, setAllCards] = useState<Card[]>([]);
+  // From the shared library, so a card opens from memory instead of waiting on a fresh read.
+  const { all: allCards } = useCards();
+  const card = useMemo(() => allCards.find((c) => c.id === cardId) ?? null, [allCards, cardId]);
   const [linking, setLinking] = useState(false);
   // Busy while photos download for sharing (the .vcf is instant).
   const [sharing, setSharing] = useState(false);
-
-  useEffect(() => {
-    return onSnapshot(doc(db, 'cards', cardId), (snap) => {
-      if (!snap.exists()) {
-        setCard(null);
-        return;
-      }
-      setCard(cardFromFirestore(snap.id, snap.data()));
-    });
-  }, [cardId]);
-
-  useEffect(() => subscribeToCards(setAllCards), []);
 
   const { partner, candidates } = useMemo(() => {
     if (!card) return { partner: undefined, candidates: [] as Card[] };

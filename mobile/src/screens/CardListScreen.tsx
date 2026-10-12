@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import { View, Text, TextInput, FlatList, Image, ScrollView, StyleSheet } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -12,12 +12,11 @@ import {
   filterCards,
   groupPairs,
   sortCards,
-  withoutMine,
   type Card,
   type CardSort,
 } from '@roloai/shared';
 import type { RootStackParamList } from '../navigation/types';
-import { subscribeToCards } from '../lib/cards';
+import { useCards } from '../lib/CardsContext';
 import { listQueuedScans, oldestEntry, queuedScanUris, type QueuedScan } from '../lib/scanQueue';
 import { APP_VERSION } from '../lib/version';
 
@@ -31,14 +30,13 @@ const CHIP_HIT_SLOP = { top: 7, bottom: 7, left: 0, right: 0 } as const;
 export default function CardListScreen({ navigation }: Props) {
   const insets = useSafeAreaInsets();
   // The owner's own card (isMine) is kept out of the library: it is reached from My Card.
-  const [cards, setCards] = useState<Card[]>([]);
+  const { cards } = useCards();
   const [search, setSearch] = useState('');
   const [sort, setSort] = useState<CardSort>('recent');
   const [tag, setTag] = useState<string | undefined>();
   const [company, setCompany] = useState<string | undefined>();
   const [queue, setQueue] = useState<QueuedScan[]>([]);
 
-  useEffect(() => subscribeToCards((all) => setCards(withoutMine(all))), []);
 
   // Refreshed on focus: scans are queued and drained on other screens, and coming back here is
   // the only time the count can have changed.

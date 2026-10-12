@@ -5,6 +5,7 @@ import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { AuthProvider, useAuth } from './src/lib/AuthContext';
+import { CardsProvider } from './src/lib/CardsContext';
 import type { RootStackParamList } from './src/navigation/types';
 import LoginScreen from './src/screens/LoginScreen';
 import CardListScreen from './src/screens/CardListScreen';
@@ -32,6 +33,7 @@ function AppNavigator() {
   }
 
   return (
+    <CardsProvider>
     <NavigationContainer>
       <Stack.Navigator>
         <Stack.Screen name="CardList" component={CardListScreen} options={{ title: 'RoloAI' }} />
@@ -42,6 +44,7 @@ function AppNavigator() {
         <Stack.Screen name="MyCard" component={MyCardScreen} options={{ title: 'My Card' }} />
       </Stack.Navigator>
     </NavigationContainer>
+    </CardsProvider>
   );
 }
 

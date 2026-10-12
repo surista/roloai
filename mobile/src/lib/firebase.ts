@@ -3,7 +3,7 @@ import { initializeApp, getApps, getApp } from 'firebase/app';
 // firebase@12, so getReactNativePersistence must come from the underlying @firebase/auth
 // package directly, which still declares it correctly.
 import { initializeAuth, getAuth, getReactNativePersistence, type Auth } from '@firebase/auth';
-import { getFirestore } from 'firebase/firestore';
+import { getFirestore, initializeFirestore, type Firestore } from 'firebase/firestore';
 import { getStorage } from 'firebase/storage';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
@@ -29,5 +29,15 @@ try {
 }
 
 export { auth };
-export const db = getFirestore(app);
+// React Native's streaming connection to Firestore can stall for many seconds before it gives up
+// and retries, which shows up as a long wait on launch. Auto-detect switches to long polling when
+// the stream does not come up, and costs nothing when it does. initializeFirestore throws if the
+// instance already exists (Fast Refresh), so fall back to the existing one.
+let firestore: Firestore;
+try {
+  firestore = initializeFirestore(app, { experimentalAutoDetectLongPolling: true });
+} catch {
+  firestore = getFirestore(app);
+}
+export const db = firestore;
 export const storage = getStorage(app);

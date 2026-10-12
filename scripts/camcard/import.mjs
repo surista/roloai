@@ -92,7 +92,7 @@ async function thumbnail(source, destination) {
 async function upload(storage, storagePath, file) {
   const bytes = await readFile(file);
   const fileRef = ref(storage, storagePath);
-  await uploadBytes(fileRef, bytes, { contentType: 'image/jpeg' });
+  await uploadBytes(fileRef, bytes, { contentType: 'image/jpeg', cacheControl: 'public,max-age=31536000,immutable' });
   return getDownloadURL(fileRef);
 }
 

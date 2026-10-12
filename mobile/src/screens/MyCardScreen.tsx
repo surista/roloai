@@ -2,10 +2,11 @@ import React, { useEffect, useState } from 'react';
 import { View, Text, TextInput, ScrollView, StyleSheet, Alert, ActivityIndicator } from 'react-native';
 import QRCode from 'react-native-qrcode-svg';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
-import { cardToVCard, myCardOf, type Card } from '@roloai/shared';
+import { cardToVCard, type Card } from '@roloai/shared';
 import type { RootStackParamList } from '../navigation/types';
 import Button from '../components/Button';
-import { saveMyCard, subscribeToCards } from '../lib/cards';
+import { saveMyCard } from '../lib/cards';
+import { useCards } from '../lib/CardsContext';
 import {
   EMPTY_MY_CARD,
   hasMyCardContent,
@@ -35,14 +36,13 @@ const FIELDS: { key: keyof MyCard; label: string; keyboard?: 'phone-pad' | 'emai
  */
 export default function MyCardScreen({ navigation }: Props) {
   // undefined until the first snapshot, so the form is not seeded from "no card" before we know.
-  const [stored, setStored] = useState<Card | null | undefined>(undefined);
+  const { myCard, loaded } = useCards();
+  const stored: Card | null | undefined = loaded ? (myCard ?? null) : undefined;
   const [form, setForm] = useState<MyCard>(EMPTY_MY_CARD);
   const [seeded, setSeeded] = useState(false);
   const [saving, setSaving] = useState(false);
   const [busy, setBusy] = useState(false);
   const [dirty, setDirty] = useState(false);
-
-  useEffect(() => subscribeToCards((cards) => setStored(myCardOf(cards) ?? null)), []);
 
   // Seed the form once: from the doc, else from the old local file. Later snapshots (our own
   // save, another device) must not overwrite what is being typed.
