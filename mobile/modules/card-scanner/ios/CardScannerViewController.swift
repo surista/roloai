@@ -54,6 +54,21 @@ final class CardScannerViewController: UIViewController {
   private var lastQuad: VNRectangleObservation?
   private var hasFired = false
 
+  /// The sharpest frame seen since the card settled, and how many frames the burst has covered.
+  /// A card that is still can still be shot mid-refocus or mid-shake; scoring the next few
+  /// frames and keeping the best is what makes the saved photo the crisp one. Video queue only.
+  private struct BestFrame {
+    let buffer: CVPixelBuffer
+    let quad: VNRectangleObservation
+    let score: Float
+  }
+  private var bestFrame: BestFrame?
+  private var burstCount = 0
+  private let burstLength = 5
+  /// Where the lens was last told to look, so focus is only re-aimed when the card has moved.
+  private var lastFocusPoint: CGPoint?
+  private var lastFocusSetAt: CFTimeInterval = 0
+
   /// Main-queue-only state. `report(_:)` hops to main before touching any of it.
   private var didReport = false
   private var hasAppeared = false
@@ -209,6 +224,10 @@ final class CardScannerViewController: UIViewController {
       // used here). A card filling half the frame then crops to ~650px wide and looks soft on
       // any big screen. Asking for the sensor's full 4:3 video format puts a 12MP frame in
       // every capture; setting activeFormat switches the session to input-priority itself.
+      // Smooth autofocus is tuned for video: it slows the lens down so refocusing is not visible.
+      // A scanner wants the fastest, and the card is always close, so search the near range only.
+      if device.isSmoothAutoFocusSupported { device.isSmoothAutoFocusEnabled = false }
+      if device.isAutoFocusRangeRestrictionSupported { device.autoFocusRangeRestriction = .near }
       if let format = Self.sharpestVideoFormat(for: device) {
         device.activeFormat = format
         if format.videoSupportedFrameRateRanges.contains(where: { $0.maxFrameRate >= 30 }) {
@@ -351,6 +370,8 @@ extension CardScannerViewController: AVCaptureVideoDataOutputSampleBufferDelegat
           Self.area(of: quad) >= minimumQuadArea else {
       stableCount = 0
       lastQuad = nil
+      bestFrame = nil
+      burstCount = 0
       DispatchQueue.main.async { [weak self] in
         self?.quadLayer.path = nil
         self?.hintLabel.text = "Point at a business card"
@@ -382,7 +403,25 @@ extension CardScannerViewController: AVCaptureVideoDataOutputSampleBufferDelegat
       self?.hintLabel.text = focusing ? "Focusing…" : (settled ? "Capturing…" : "Hold steady")
     }
 
-    guard settled else { return }
+    // Aim focus and exposure at the card, not at whatever is in the middle of the frame: with the
+    // card off-centre the lens would otherwise settle on the table behind it.
+    steerFocus(toward: quad, at: now)
+
+    guard settled else {
+      bestFrame = nil
+      burstCount = 0
+      return
+    }
+
+    // Settled and focused: look at the next few frames and keep the sharpest.
+    let score = Self.sharpness(of: detectionImage, inside: quad)
+    if bestFrame == nil || score > bestFrame!.score {
+      bestFrame = BestFrame(buffer: buffer, quad: quad, score: score)
+    }
+    burstCount += 1
+    guard burstCount >= burstLength, let best = bestFrame else { return }
+    bestFrame = nil
+    burstCount = 0
     hasFired = true
 
     // Flash first. This is the shutter moment as the user experiences it, and the crop and
@@ -397,8 +436,9 @@ extension CardScannerViewController: AVCaptureVideoDataOutputSampleBufferDelegat
     // The frame the quad was measured on, so its corners already describe this exact image.
     // The old path re-detected on a separately captured still, which could disagree with the
     // outline the user had just been shown.
-    let upright = CIImage(cvPixelBuffer: buffer).oriented(.right)
-    guard let path = Self.write(Self.uprightCard(Self.crop(upright, to: quad))) else {
+    let upright = CIImage(cvPixelBuffer: best.buffer).oriented(.right)
+    let card = Self.uprightCard(Self.crop(upright, to: best.quad))
+    guard let path = Self.write(Self.sharpened(card)) else {
       resumeAfterFailedCapture()
       return
     }
@@ -408,6 +448,69 @@ extension CardScannerViewController: AVCaptureVideoDataOutputSampleBufferDelegat
     DispatchQueue.main.asyncAfter(deadline: flashEndsAt) { [weak self] in
       self?.reportOnMain(.captured(path))
     }
+  }
+
+  /// Points the lens and exposure at the middle of the card, at most a couple of times a second
+  /// and only once the card has moved: re-aiming every frame would make the lens hunt.
+  private func steerFocus(toward quad: VNRectangleObservation, at now: CFTimeInterval) {
+    guard let device = captureDevice, device.isFocusPointOfInterestSupported else { return }
+    let corners = [quad.topLeft, quad.topRight, quad.bottomRight, quad.bottomLeft]
+    let center = CGPoint(
+      x: corners.map(\.x).reduce(0, +) / 4,
+      y: corners.map(\.y).reduce(0, +) / 4
+    )
+    // Vision's upright, bottom-left-origin space back to the sensor's: the same undoing of the
+    // quarter turn and y flip that draw(_:) performs.
+    let point = CGPoint(x: 1 - center.y, y: 1 - center.x)
+    if let last = lastFocusPoint, hypot(point.x - last.x, point.y - last.y) < 0.06 { return }
+    guard now - lastFocusSetAt > 0.4, (try? device.lockForConfiguration()) != nil else { return }
+    device.focusPointOfInterest = point
+    if device.isFocusModeSupported(.continuousAutoFocus) { device.focusMode = .continuousAutoFocus }
+    if device.isExposurePointOfInterestSupported {
+      device.exposurePointOfInterest = point
+      if device.isExposureModeSupported(.continuousAutoExposure) {
+        device.exposureMode = .continuousAutoExposure
+      }
+    }
+    device.unlockForConfiguration()
+    lastFocusPoint = point
+    lastFocusSetAt = now
+  }
+
+  /// How much fine detail the card area holds: the mean edge strength inside the quad's bounding
+  /// box. Only ever compared between frames of the same card, where a blurred frame always scores
+  /// lower than a sharp one.
+  private static func sharpness(of detectionImage: CIImage, inside quad: VNRectangleObservation) -> Float {
+    let upright = detectionImage.oriented(.right)
+    let extent = upright.extent
+    let xs = [quad.topLeft.x, quad.topRight.x, quad.bottomRight.x, quad.bottomLeft.x]
+    let ys = [quad.topLeft.y, quad.topRight.y, quad.bottomRight.y, quad.bottomLeft.y]
+    let region = CGRect(
+      x: extent.minX + (xs.min() ?? 0) * extent.width,
+      y: extent.minY + (ys.min() ?? 0) * extent.height,
+      width: ((xs.max() ?? 1) - (xs.min() ?? 0)) * extent.width,
+      height: ((ys.max() ?? 1) - (ys.min() ?? 0)) * extent.height
+    ).intersection(extent)
+    guard !region.isEmpty else { return 0 }
+
+    let edges = upright.cropped(to: region).applyingFilter("CIEdges", parameters: [kCIInputIntensityKey: 1.0])
+    let average = edges.applyingFilter("CIAreaAverage", parameters: [kCIInputExtentKey: CIVector(cgRect: edges.extent)])
+    var pixel = [Float](repeating: 0, count: 4)
+    ciContext.render(
+      average,
+      toBitmap: &pixel,
+      rowBytes: MemoryLayout<Float>.size * 4,
+      bounds: CGRect(x: 0, y: 0, width: 1, height: 1),
+      format: .RGBAf,
+      colorSpace: nil
+    )
+    return pixel[0] + pixel[1] + pixel[2]
+  }
+
+  /// A light luminance sharpen. Video frames get less in-camera sharpening than a still photo, and
+  /// text on a card reads noticeably crisper with a little put back. Kept mild to avoid halos.
+  private static func sharpened(_ image: CIImage) -> CIImage {
+    image.applyingFilter("CISharpenLuminance", parameters: [kCIInputSharpnessKey: 0.45])
   }
 
   private func draw(_ quad: VNRectangleObservation) {
@@ -539,13 +642,31 @@ extension CardScannerViewController {
     _ = warmUpOnce
   }
 
+  /// Runs the live edge detector once on a card-like picture. It is a separate model from the text
+  /// reader, and is the first thing the scanner runs on the camera: left cold, the outline does not
+  /// appear for the first stretch after a fresh install while the model loads, which reads as the
+  /// first scan taking forever.
+  private static func warmUpEdgeDetection() {
+    let size = CGSize(width: 640, height: 480)
+    let image = UIGraphicsImageRenderer(size: size).image { context in
+      UIColor.darkGray.setFill()
+      context.fill(CGRect(origin: .zero, size: size))
+      UIColor.white.setFill()
+      context.fill(CGRect(x: 110, y: 120, width: 420, height: 240))
+    }
+    guard let cgImage = image.cgImage else { return }
+    let request = VNDetectDocumentSegmentationRequest()
+    try? VNImageRequestHandler(cgImage: cgImage, orientation: .right, options: [:]).perform([request])
+  }
+
   /// A lazily initialised static runs its initialiser exactly once, on whichever thread asks
   /// first, which is the once-only guarantee wanted here.
   private static let warmUpOnce: Void = {
     // Low priority and a few seconds late: this is kicked off as the app launches, and the first
     // run on a new install compiles models for a long time. Starting it at once competed with the
     // app's own startup (sign-in, loading the library, decoding thumbnails) and slowed the open.
-    DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 6) {
+    DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 1.5) {
+      warmUpEdgeDetection()
       let size = CGSize(width: 400, height: 120)
       let image = UIGraphicsImageRenderer(size: size).image { context in
         UIColor.white.setFill()
