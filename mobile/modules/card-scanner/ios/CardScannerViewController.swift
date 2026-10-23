@@ -65,6 +65,13 @@ final class CardScannerViewController: UIViewController {
   private var bestFrame: BestFrame?
   private var burstCount = 0
   private let burstLength = 5
+  /// The most frames a burst may run while waiting for the lens to finish sharpening.
+  private let burstLimit = 20
+  /// The sharpest score seen for the card now in view. A frame is good enough once it comes within
+  /// this fraction of that: while focus is still creeping in, later frames are better, and
+  /// shooting the first few steady ones is what produced "slightly soft" photos.
+  private var sharpestSeen: Float = 0
+  private let sharpEnoughRatio: Float = 0.9
   /// Where the lens was last told to look, so focus is only re-aimed when the card has moved.
   private var lastFocusPoint: CGPoint?
   private var lastFocusSetAt: CFTimeInterval = 0
@@ -235,6 +242,14 @@ final class CardScannerViewController: UIViewController {
           device.activeVideoMaxFrameDuration = CMTime(value: 1, timescale: 30)
         }
       }
+      // A video frame may expose for as long as one frame lasts, 1/30s, and indoors the camera
+      // takes it: a hand's tremor then smears fine text however well it is focused. Capping the
+      // exposure raises ISO instead, which costs a little noise but keeps the strokes crisp.
+      if #available(iOS 18.0, *) {
+        let shortest = device.activeFormat.minExposureDuration
+        let cap = CMTime(value: 1, timescale: 100)
+        device.activeMaxExposureDuration = CMTimeCompare(cap, shortest) < 0 ? shortest : cap
+      }
       if device.isFocusModeSupported(.continuousAutoFocus) {
         device.focusMode = .continuousAutoFocus
       }
@@ -372,6 +387,7 @@ extension CardScannerViewController: AVCaptureVideoDataOutputSampleBufferDelegat
       lastQuad = nil
       bestFrame = nil
       burstCount = 0
+      sharpestSeen = 0
       DispatchQueue.main.async { [weak self] in
         self?.quadLayer.path = nil
         self?.hintLabel.text = "Point at a business card"
@@ -405,7 +421,7 @@ extension CardScannerViewController: AVCaptureVideoDataOutputSampleBufferDelegat
 
     // Aim focus and exposure at the card, not at whatever is in the middle of the frame: with the
     // card off-centre the lens would otherwise settle on the table behind it.
-    steerFocus(toward: quad, at: now)
+    steerFocus(toward: quad, in: detectionImage, at: now)
 
     guard settled else {
       bestFrame = nil
@@ -418,8 +434,15 @@ extension CardScannerViewController: AVCaptureVideoDataOutputSampleBufferDelegat
     if bestFrame == nil || score > bestFrame!.score {
       bestFrame = BestFrame(buffer: buffer, quad: quad, score: score)
     }
+    sharpestSeen = max(sharpestSeen, score)
     burstCount += 1
-    guard burstCount >= burstLength, let best = bestFrame else { return }
+    // Enough frames, and the best of them is as sharp as this card has been: otherwise keep
+    // looking (up to a limit) rather than saving a frame the lens was still closing in on.
+    guard let best = bestFrame,
+          burstCount >= burstLimit
+            || (burstCount >= burstLength && best.score >= sharpestSeen * sharpEnoughRatio) else {
+      return
+    }
     bestFrame = nil
     burstCount = 0
     hasFired = true
@@ -452,18 +475,26 @@ extension CardScannerViewController: AVCaptureVideoDataOutputSampleBufferDelegat
 
   /// Points the lens and exposure at the middle of the card, at most a couple of times a second
   /// and only once the card has moved: re-aiming every frame would make the lens hunt.
-  private func steerFocus(toward quad: VNRectangleObservation, at now: CFTimeInterval) {
+  private func steerFocus(toward quad: VNRectangleObservation, in detectionImage: CIImage, at now: CFTimeInterval) {
     guard let device = captureDevice, device.isFocusPointOfInterestSupported else { return }
+    // Whether the card has moved is judged from its corners, which is free; the text lookup below
+    // renders an image, so it only runs once the lens actually needs re-aiming.
     let corners = [quad.topLeft, quad.topRight, quad.bottomRight, quad.bottomLeft]
-    let center = CGPoint(
+    let middle = CGPoint(
       x: corners.map(\.x).reduce(0, +) / 4,
       y: corners.map(\.y).reduce(0, +) / 4
     )
+    if let last = lastFocusPoint, hypot(middle.x - last.x, middle.y - last.y) < 0.06 { return }
+    guard now - lastFocusSetAt > 0.4 else { return }
+
+    // Autofocus needs texture, and the middle of a business card is usually blank paper: aimed
+    // there the lens hunts or settles on the table behind. Aim at where the text is instead,
+    // falling back to the card's middle when nothing stands out.
+    let target = Self.textCenter(of: detectionImage, inside: quad) ?? middle
     // Vision's upright, bottom-left-origin space back to the sensor's: the same undoing of the
     // quarter turn and y flip that draw(_:) performs.
-    let point = CGPoint(x: 1 - center.y, y: 1 - center.x)
-    if let last = lastFocusPoint, hypot(point.x - last.x, point.y - last.y) < 0.06 { return }
-    guard now - lastFocusSetAt > 0.4, (try? device.lockForConfiguration()) != nil else { return }
+    let point = CGPoint(x: 1 - target.y, y: 1 - target.x)
+    guard (try? device.lockForConfiguration()) != nil else { return }
     device.focusPointOfInterest = point
     if device.isFocusModeSupported(.continuousAutoFocus) { device.focusMode = .continuousAutoFocus }
     if device.isExposurePointOfInterestSupported {
@@ -473,7 +504,7 @@ extension CardScannerViewController: AVCaptureVideoDataOutputSampleBufferDelegat
       }
     }
     device.unlockForConfiguration()
-    lastFocusPoint = point
+    lastFocusPoint = middle
     lastFocusSetAt = now
   }
 
@@ -505,6 +536,58 @@ extension CardScannerViewController: AVCaptureVideoDataOutputSampleBufferDelegat
       colorSpace: nil
     )
     return pixel[0] + pixel[1] + pixel[2]
+  }
+
+  /// The weighted centre of the card's edge energy (its printed text and logo), in Vision's
+  /// upright, bottom-left-origin space; nil for a card with nothing printed on it.
+  private static func textCenter(of detectionImage: CIImage, inside quad: VNRectangleObservation) -> CGPoint? {
+    let upright = detectionImage.oriented(.right)
+    let extent = upright.extent
+    let xs = [quad.topLeft.x, quad.topRight.x, quad.bottomRight.x, quad.bottomLeft.x]
+    let ys = [quad.topLeft.y, quad.topRight.y, quad.bottomRight.y, quad.bottomLeft.y]
+    let region = CGRect(
+      x: extent.minX + (xs.min() ?? 0) * extent.width,
+      y: extent.minY + (ys.min() ?? 0) * extent.height,
+      width: ((xs.max() ?? 1) - (xs.min() ?? 0)) * extent.width,
+      height: ((ys.max() ?? 1) - (ys.min() ?? 0)) * extent.height
+    ).intersection(extent)
+    guard region.width > 1, region.height > 1 else { return nil }
+
+    let gridWidth: CGFloat = 24
+    let scale = gridWidth / region.width
+    let edges = upright.cropped(to: region)
+      .applyingFilter("CIEdges", parameters: [kCIInputIntensityKey: 1.0])
+      .transformed(by: CGAffineTransform(translationX: -region.minX, y: -region.minY))
+      .transformed(by: CGAffineTransform(scaleX: scale, y: scale))
+    let columns = Int(gridWidth)
+    let rows = max(1, Int((region.height * scale).rounded()))
+    var pixels = [Float](repeating: 0, count: columns * rows * 4)
+    ciContext.render(
+      edges,
+      toBitmap: &pixels,
+      rowBytes: columns * MemoryLayout<Float>.size * 4,
+      bounds: CGRect(x: 0, y: 0, width: columns, height: rows),
+      format: .RGBAf,
+      colorSpace: nil
+    )
+    var total: Float = 0, sumX: Float = 0, sumY: Float = 0
+    for row in 0..<rows {
+      for column in 0..<columns {
+        let index = (row * columns + column) * 4
+        let energy = pixels[index] + pixels[index + 1] + pixels[index + 2]
+        total += energy
+        sumX += energy * (Float(column) + 0.5)
+        sumY += energy * (Float(row) + 0.5)
+      }
+    }
+    guard total > 0 else { return nil }
+    // Bitmap row 0 is the top; Vision's y runs up from the bottom.
+    let inRegionX = CGFloat(sumX / total) / CGFloat(columns)
+    let inRegionY = 1 - CGFloat(sumY / total) / CGFloat(rows)
+    return CGPoint(
+      x: (region.minX - extent.minX + inRegionX * region.width) / extent.width,
+      y: (region.minY - extent.minY + inRegionY * region.height) / extent.height
+    )
   }
 
   /// A light luminance sharpen. Video frames get less in-camera sharpening than a still photo, and
