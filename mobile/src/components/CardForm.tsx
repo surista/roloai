@@ -586,6 +586,8 @@ function MultiSection<T extends { label: string }>(props: {
         pressedStyle={styles.rowPressed}
         hitSlop={undefined}
         disabled={!editable}
+        accessibilityRole="button"
+        accessibilityLabel={props.addLabel.replace(/^add /, 'Add ')}
         onPress={() => {
           onChange([...items, make(labels[0], '')]);
           setFocusIndex(items.length);
@@ -775,6 +777,7 @@ const styles = StyleSheet.create({
   },
   chipText: { ...type.subheadline, color: colors.label },
   tagInput: { flexGrow: 1, minWidth: 90, paddingVertical: 6 },
-  suggestions: { gap: 6, paddingHorizontal: 16, paddingTop: 8, paddingBottom: 4 },
+  // Starts under the value column (16 inset + 82 label + 10 gap).
+  suggestions: { gap: 6, paddingLeft: 108, paddingRight: 16, paddingTop: 8, paddingBottom: 4 },
   suggestionChip: { backgroundColor: 'transparent', borderWidth: StyleSheet.hairlineWidth, borderColor: colors.separator },
 });

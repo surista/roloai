@@ -1,4 +1,6 @@
-import { NativeModule, requireNativeModule } from 'expo';
+import type { ComponentType } from 'react';
+import type { ViewProps } from 'react-native';
+import { NativeModule, requireNativeModule, requireNativeView } from 'expo';
 
 export type CardScanResult =
   /** `uri` is a `file://` path to the cropped JPEG. */
@@ -36,3 +38,22 @@ declare class CardScannerModule extends NativeModule<Events> {
 }
 
 export default requireNativeModule<CardScannerModule>('CardScanner');
+
+export interface ContextMenuAction {
+  id: string;
+  title: string;
+  /** An SF Symbol name. */
+  image?: string;
+  destructive?: boolean;
+}
+
+/**
+ * A native long-press context menu around its children (UIContextMenuInteraction). Taps still
+ * reach the children. `onSelect` fires after the menu has dismissed.
+ */
+export const ContextMenu: ComponentType<
+  ViewProps & {
+    actions: ContextMenuAction[];
+    onSelect: (event: { nativeEvent: { id: string } }) => void;
+  }
+> = requireNativeView('CardScanner');

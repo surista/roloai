@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import type { CardSort } from '@roloai/shared';
 
 /**
  * Per-device settings. Kept on the device rather than in Firestore: whether this phone may use
@@ -8,10 +9,12 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 export interface Preferences {
   /** Record where each card was scanned. Off until the owner turns it on in Settings. */
   recordLocation: boolean;
+  /** The card list's sort, remembered like Contacts' "Sort Order". */
+  listSort: CardSort;
 }
 
 const KEY = 'roloai.preferences.v1';
-const DEFAULTS: Preferences = { recordLocation: false };
+const DEFAULTS: Preferences = { recordLocation: false, listSort: 'recent' };
 
 let cache: Preferences | undefined;
 const listeners = new Set<(p: Preferences) => void>();

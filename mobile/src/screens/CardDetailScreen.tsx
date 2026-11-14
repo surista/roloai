@@ -188,7 +188,7 @@ export default function CardDetailScreen({ route, navigation }: Props) {
           </Button>
         ) : (
           <View style={[styles.heroImage, styles.heroPlaceholder]}>
-            <SymbolView name="person.text.rectangle" size={44} tintColor={colors.tertiaryLabel} />
+            <SymbolView name="person.text.rectangle" size={44} tintColor={colors.tertiaryLabel} accessibilityElementsHidden importantForAccessibility="no" />
           </View>
         )}
         <Text style={styles.name} accessibilityRole="header">
@@ -344,7 +344,8 @@ function ActionButton(props: { symbol: SFSymbol; label: string; disabled?: boole
       hitSlop={undefined}
       disabled={props.disabled}
       onPress={props.onPress}
-      accessibilityLabel={props.label}
+      // Contacts' labels are lowercase on screen; VoiceOver should still say "Message", not "message".
+      accessibilityLabel={props.label.charAt(0).toUpperCase() + props.label.slice(1)}
     >
       <SymbolView name={props.symbol} size={22} tintColor={props.disabled ? colors.tertiaryLabel : colors.tint} />
       <Text style={[styles.actionLabel, props.disabled && styles.actionLabelDisabled]}>{props.label}</Text>

@@ -25,6 +25,7 @@ export function useDevRoute(nav: NavigationContainerRefWithCurrent<RootStackPara
           screen?: keyof RootStackParamList;
           params?: object;
         };
+        file.delete(); // once only, or it replays on the next launch
         if (cmd.n === last) return;
         last = cmd.n;
         if (cmd.go === 'back') nav.goBack();

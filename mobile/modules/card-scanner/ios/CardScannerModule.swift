@@ -25,6 +25,13 @@ public class CardScannerModule: Module {
       if CardScannerModule.current === self { CardScannerModule.current = nil }
     }
 
+    View(ContextMenuView.self) {
+      Events("onSelect")
+      Prop("actions") { (view: ContextMenuView, actions: [ContextMenuAction]) in
+        view.actions = actions
+      }
+    }
+
     /// The card a Spotlight tap launched the app for, once; nil afterwards.
     Function("takePendingCardId") { () -> String? in
       defer { CardScannerModule.pendingCardId = nil }

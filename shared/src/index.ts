@@ -179,9 +179,9 @@ export function passwordResetError(error: unknown): string | null {
 export type CardSort = 'recent' | 'firstName' | 'lastName' | 'company';
 
 export const CARD_SORT_OPTIONS: { value: CardSort; label: string }[] = [
-  { value: 'recent', label: 'Recently added' },
-  { value: 'firstName', label: 'First name' },
-  { value: 'lastName', label: 'Last name' },
+  { value: 'recent', label: 'Recently Added' },
+  { value: 'firstName', label: 'First Name' },
+  { value: 'lastName', label: 'Last Name' },
   { value: 'company', label: 'Company' },
 ];
 

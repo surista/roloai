@@ -278,7 +278,7 @@ function Row(props: {
   const content = (
     <>
       {props.symbol && (
-        <View style={[styles.icon, { backgroundColor: props.symbolBg }]}>
+        <View style={[styles.icon, { backgroundColor: props.symbolBg }]} accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
           <SymbolView name={props.symbol} size={16} tintColor={colors.onTint} />
         </View>
       )}

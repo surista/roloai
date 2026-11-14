@@ -5,7 +5,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { Image } from 'expo-image';
 import { SymbolView } from 'expo-symbols';
-import { MenuView } from '@react-native-menu/menu';
+import { ContextMenu, type ContextMenuAction } from '../../modules/card-scanner';
 import ReanimatedSwipeable from 'react-native-gesture-handler/ReanimatedSwipeable';
 import {
   CARD_SORT_OPTIONS,
@@ -30,6 +30,7 @@ import { subscribeToQueue } from '../lib/queueReader';
 import { addToContacts, call, email, message } from '../lib/contactActions';
 import { presentShareMenu } from '../lib/shareCardImages';
 import { confirmDelete } from '../lib/deleteFlow';
+import { setPreference, usePreferences } from '../lib/preferences';
 import { haptics } from '../lib/haptics';
 import { colors, type } from '../theme';
 
@@ -55,18 +56,39 @@ export default function CardListScreen({ navigation }: Props) {
   // The owner's own card (isMine) is kept out of the library: it is reached from My Card.
   const { cards, loaded, error } = useCards();
   const [search, setSearch] = useState('');
-  const [sort, setSort] = useState<CardSort>('recent');
+  const prefs = usePreferences();
+  const sort: CardSort = prefs?.listSort ?? 'recent';
+  const setSort = (value: CardSort) => void setPreference('listSort', value);
   const [tag, setTag] = useState<string | undefined>();
   const [company, setCompany] = useState<string | undefined>();
   const [queue, setQueue] = useState<QueuedScan[]>([]);
   const listRef = useRef<SectionList<ListEntry, Section>>(null);
-  const pendingSection = useRef<number | null>(null);
-  const retries = useRef(0);
-  const scrollToSection = (i: number) => {
-    if (pendingSection.current !== i) retries.current = 0;
-    pendingSection.current = i;
-    listRef.current?.scrollToLocation({ sectionIndex: i, itemIndex: 0, viewOffset: 0, animated: false });
+  // Jumps for the A–Z index. SectionList.scrollToLocation can't be used: on this React Native
+  // version the list reports every cell at offset 0, so it always "scrolls" to the top. Instead
+  // the section's header is measured where it actually is in the scroll content.
+  const headerRefs = useRef(new Map<string, View | null>());
+  const contentHeight = useRef(0);
+  const scrollToSection = (i: number, attempt = 0) => {
+    const title = sections[i]?.title;
+    const list = listRef.current;
+    const responder = list?.getScrollResponder() as { getNativeScrollRef?: () => unknown } | undefined;
+    const scrollNode = responder?.getNativeScrollRef?.();
+    const header = title ? headerRefs.current.get(title) : undefined;
+    if (header && scrollNode) {
+      header.measureLayout(
+        scrollNode as never,
+        (_x, y) => list?.getScrollResponder()?.scrollTo({ y, animated: false }),
+        () => {}
+      );
+      return;
+    }
+    // Not rendered yet (a long library): jump to roughly where it is so it renders, then measure.
+    const rows = (k: number) => sections.slice(0, k).reduce((n, sec) => n + sec.data.length + 1, 0);
+    const estimate = (rows(i) / Math.max(1, rows(sections.length))) * contentHeight.current;
+    list?.getScrollResponder()?.scrollTo({ y: estimate, animated: false });
+    if (attempt < 4) setTimeout(() => scrollToSection(i, attempt + 1), 60);
   };
+
 
   // Refreshed on focus and whenever the background reader finishes one.
   useFocusEffect(
@@ -255,25 +277,27 @@ export default function CardListScreen({ navigation }: Props) {
     <View style={styles.screen}>
       <SectionList
         ref={listRef}
-        // Rows are measured, not fixed, so a jump to a section that hasn't rendered yet fails;
-        // without this handler that failure is a fatal invariant. Scroll near it, then retry.
-        onScrollToIndexFailed={(info) => {
-          listRef.current?.getScrollResponder()?.scrollTo({ y: info.averageItemLength * info.index, animated: false });
-          const section = pendingSection.current;
-          if (section !== null && retries.current++ < 4) setTimeout(() => scrollToSection(section), 60);
-        }}
+        onContentSizeChange={(_w, h) => (contentHeight.current = h)}
         sections={sections}
         keyExtractor={(item) => item.card.id}
         contentInsetAdjustmentBehavior="automatic"
         keyboardDismissMode="on-drag"
+        // A search result opens on the first tap, as in Contacts, instead of only closing the keyboard.
+        keyboardShouldPersistTaps="handled"
         stickySectionHeadersEnabled
         contentContainerStyle={{ paddingBottom: insets.bottom + 96 }}
         ListHeaderComponent={listHeader}
         renderSectionHeader={({ section }) =>
           section.title ? (
-            <Text style={styles.sectionHeader} accessibilityRole="header">
-              {section.title}
-            </Text>
+            <View
+              ref={(r) => {
+                headerRefs.current.set(section.title, r);
+              }}
+            >
+              <Text style={styles.sectionHeader} accessibilityRole="header">
+                {section.title}
+              </Text>
+            </View>
           ) : null
         }
         ItemSeparatorComponent={() => <View style={styles.separator} />}
@@ -302,7 +326,7 @@ export default function CardListScreen({ navigation }: Props) {
       {showIndex && (
         <SectionIndex
           letters={sections.map((s) => s.title)}
-          onSelect={scrollToSection}
+          onSelect={(i) => scrollToSection(i)}
         />
       )}
 
@@ -332,14 +356,15 @@ function CardRow({ entry, onOpen, showsChevron }: { entry: ListEntry; onOpen: ()
   const canMail = card.emails.some((e) => mailtoUrl(e.address));
   const close = () => swipeRef.current?.close();
 
-  const actions = [
+  const candidates: (ContextMenuAction | false)[] = [
     canCall && { id: 'call', title: 'Call', image: 'phone' },
     canCall && { id: 'message', title: 'Message', image: 'message' },
     canMail && { id: 'email', title: 'Email', image: 'envelope' },
     { id: 'contacts', title: 'Add to Contacts', image: 'person.crop.circle.badge.plus' },
     { id: 'share', title: sharing ? 'Preparing…' : 'Share', image: 'square.and.arrow.up' },
-    { id: 'delete', title: 'Delete', image: 'trash', attributes: { destructive: true } },
-  ].filter(Boolean) as { id: string; title: string; image: string; attributes?: { destructive: boolean } }[];
+    { id: 'delete', title: 'Delete', image: 'trash', destructive: true },
+  ];
+  const actions = candidates.filter((a): a is ContextMenuAction => Boolean(a));
 
   const run = (id: string) => {
     if (id === 'call') void call(card);
@@ -367,11 +392,7 @@ function CardRow({ entry, onOpen, showsChevron }: { entry: ListEntry; onOpen: ()
 
   return (
     <ReanimatedSwipeable ref={swipeRef} renderRightActions={renderRightActions} overshootRight={false} friction={1.5} rightThreshold={40}>
-      <MenuView
-        shouldOpenOnLongPress
-        actions={actions}
-        onPressAction={({ nativeEvent }) => run(nativeEvent.event)}
-      >
+      <ContextMenu actions={actions} onSelect={({ nativeEvent }) => run(nativeEvent.id)}>
         <Button
           style={styles.row}
           pressedStyle={styles.rowPressed}
@@ -390,7 +411,7 @@ function CardRow({ entry, onOpen, showsChevron }: { entry: ListEntry; onOpen: ()
             <Image source={{ uri: thumb }} style={styles.thumb} contentFit="cover" cachePolicy="memory-disk" transition={120} recyclingKey={card.id} />
           ) : (
             <View style={[styles.thumb, styles.thumbPlaceholder]}>
-              <SymbolView name="person.text.rectangle" size={20} tintColor={colors.tertiaryLabel} />
+              <SymbolView name="person.text.rectangle" size={20} tintColor={colors.tertiaryLabel} accessibilityElementsHidden importantForAccessibility="no" />
             </View>
           )}
           <View style={styles.rowText}>
@@ -409,7 +430,7 @@ function CardRow({ entry, onOpen, showsChevron }: { entry: ListEntry; onOpen: ()
           ) : null}
           {showsChevron && <SymbolView name="chevron.right" size={13} tintColor={colors.tertiaryLabel} />}
         </Button>
-      </MenuView>
+      </ContextMenu>
     </ReanimatedSwipeable>
   );
 }
@@ -428,34 +449,55 @@ function SwipeAction(props: { symbol: 'phone.fill' | 'envelope.fill' | 'trash.fi
  * sections; each new letter gives a selection tick.
  */
 function SectionIndex({ letters, onSelect }: { letters: string[]; onSelect: (index: number) => void }) {
-  const [height, setHeight] = useState(0);
+  // Where the letters sit inside the touch column. The letters ignore touches, so locationY is
+  // always relative to the column (it was relative to the touched letter, so every tap meant "A").
+  const frame = useRef({ top: 0, height: 0 });
   const last = useRef(-1);
+  const [current, setCurrent] = useState(0);
+  const select = (i: number) => {
+    if (i === last.current) return;
+    last.current = i;
+    setCurrent(i);
+    haptics.selection();
+    onSelect(i);
+  };
   const pick = (e: GestureResponderEvent) => {
+    const { top, height } = frame.current;
     if (!height) return;
-    const i = Math.max(0, Math.min(letters.length - 1, Math.floor((e.nativeEvent.locationY / height) * letters.length)));
-    if (i !== last.current) {
-      last.current = i;
-      haptics.selection();
-      onSelect(i);
-    }
+    const ratio = (e.nativeEvent.locationY - top) / height;
+    select(Math.max(0, Math.min(letters.length - 1, Math.floor(ratio * letters.length))));
   };
   return (
     <View
       style={styles.index}
-      onLayout={(e) => setHeight(e.nativeEvent.layout.height)}
       onStartShouldSetResponder={() => true}
       onMoveShouldSetResponder={() => true}
-      onResponderGrant={pick}
+      onResponderGrant={(e) => {
+        last.current = -1;
+        pick(e);
+      }}
       onResponderMove={pick}
-      onResponderRelease={() => (last.current = -1)}
+      onResponderTerminationRequest={() => false}
+      accessible
       accessibilityRole="adjustable"
       accessibilityLabel="Section index"
+      accessibilityValue={{ text: letters[current] }}
+      accessibilityActions={[{ name: 'increment' }, { name: 'decrement' }]}
+      onAccessibilityAction={(e) => {
+        const next = e.nativeEvent.actionName === 'increment' ? current + 1 : current - 1;
+        if (next >= 0 && next < letters.length) select(next);
+      }}
     >
-      {letters.map((l) => (
-        <Text key={l} style={styles.indexLetter}>
-          {l}
-        </Text>
-      ))}
+      <View
+        pointerEvents="none"
+        onLayout={(e) => (frame.current = { top: e.nativeEvent.layout.y, height: e.nativeEvent.layout.height })}
+      >
+        {letters.map((l) => (
+          <Text key={l} style={styles.indexLetter}>
+            {l}
+          </Text>
+        ))}
+      </View>
     </View>
   );
 }
