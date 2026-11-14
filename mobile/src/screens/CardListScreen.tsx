@@ -60,6 +60,13 @@ export default function CardListScreen({ navigation }: Props) {
   const [company, setCompany] = useState<string | undefined>();
   const [queue, setQueue] = useState<QueuedScan[]>([]);
   const listRef = useRef<SectionList<ListEntry, Section>>(null);
+  const pendingSection = useRef<number | null>(null);
+  const retries = useRef(0);
+  const scrollToSection = (i: number) => {
+    if (pendingSection.current !== i) retries.current = 0;
+    pendingSection.current = i;
+    listRef.current?.scrollToLocation({ sectionIndex: i, itemIndex: 0, viewOffset: 0, animated: false });
+  };
 
   // Refreshed on focus and whenever the background reader finishes one.
   useFocusEffect(
@@ -117,7 +124,9 @@ export default function CardListScreen({ navigation }: Props) {
       // The system search bar, which collapses under the large title as Contacts' does.
       headerSearchBarOptions: {
         placeholder: 'Search',
-        hideWhenScrolling: true,
+        // Under the large title, as in Contacts. On iOS 26 the default puts it in the bottom
+        // toolbar, where it collides with the floating Scan Card button.
+        placement: 'stacked',
         autoCapitalize: 'none',
         onChangeText: (e) => setSearch(e.nativeEvent.text),
         onCancelButtonPress: () => setSearch(''),
@@ -246,6 +255,13 @@ export default function CardListScreen({ navigation }: Props) {
     <View style={styles.screen}>
       <SectionList
         ref={listRef}
+        // Rows are measured, not fixed, so a jump to a section that hasn't rendered yet fails;
+        // without this handler that failure is a fatal invariant. Scroll near it, then retry.
+        onScrollToIndexFailed={(info) => {
+          listRef.current?.getScrollResponder()?.scrollTo({ y: info.averageItemLength * info.index, animated: false });
+          const section = pendingSection.current;
+          if (section !== null && retries.current++ < 4) setTimeout(() => scrollToSection(section), 60);
+        }}
         sections={sections}
         keyExtractor={(item) => item.card.id}
         contentInsetAdjustmentBehavior="automatic"
@@ -286,7 +302,7 @@ export default function CardListScreen({ navigation }: Props) {
       {showIndex && (
         <SectionIndex
           letters={sections.map((s) => s.title)}
-          onSelect={(i) => listRef.current?.scrollToLocation({ sectionIndex: i, itemIndex: 0, viewOffset: 0, animated: false })}
+          onSelect={scrollToSection}
         />
       )}
 

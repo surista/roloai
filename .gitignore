@@ -28,3 +28,8 @@ functions/lib/
 
 # The raw CamCard export itself: hundreds of contacts plus session-authenticated photo URLs.
 Export Business Card Image*.xlsx
+
+# Emulator logs
+firestore-debug.log
+storage-debug.log
+ui-debug.log

@@ -13,7 +13,8 @@ export default function ContactLinks({
   card: Card;
   onFollowUp: (when: number | undefined) => void;
 }) {
-  const followUpValue = card.followUpAt ? new Date(card.followUpAt).toISOString().slice(0, 10) : '';
+  // The local calendar day, not toISOString's UTC one: 9 AM in Sydney is the previous day in UTC.
+  const followUpValue = card.followUpAt ? localDay(new Date(card.followUpAt)) : '';
   return (
     <dl className="contact-links">
       {card.phones.map((p, i) => (
@@ -92,9 +93,14 @@ export default function ContactLinks({
               onFollowUp(e.target.value ? new Date(`${e.target.value}T09:00:00`).getTime() : undefined)
             }
           />
-          <span className="contact-link-hint">Reminders are sent by the iPhone app.</span>
+          <span className="contact-link-hint">The iPhone app reminds you at 9 AM that day.</span>
         </dd>
       </div>
     </dl>
   );
+}
+
+function localDay(d: Date): string {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }

@@ -48,7 +48,9 @@ export default function ScanScreen({ navigation, route }: Props) {
 
   /** Hands the accepted photos to the review screen, which reads them. Nothing is awaited here. */
   const finishWithPhotos = (frontPhotoUri: string, backPhotoUri?: string) => {
-    navigation.navigate('ReviewEdit', { scan: { frontUri: frontPhotoUri, backUri: backPhotoUri }, mine });
+    // Replace, not push: Scan is a full-screen modal, and a screen pushed after a modal lands in
+    // the root stack *underneath* it, so the review would open hidden behind the camera.
+    navigation.replace('ReviewEdit', { scan: { frontUri: frontPhotoUri, backUri: backPhotoUri }, mine });
   };
 
   const acceptFront = (uri: string) => {
@@ -108,7 +110,7 @@ export default function ScanScreen({ navigation, route }: Props) {
     const draft = parseQrPayload(result.data);
     // A link-only QR goes into Website rather than being dumped into Notes.
     const link = qrUrlDraft(result.data);
-    navigation.navigate('ReviewEdit', { draft: link ? { ...draft, notes: undefined, ...link } : draft });
+    navigation.replace('ReviewEdit', { draft: link ? { ...draft, notes: undefined, ...link } : draft });
   };
 
   const close = () => {

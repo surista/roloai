@@ -61,7 +61,11 @@ export default function CardDetailScreen({ route, navigation }: Props) {
   }, [card, allCards]);
 
   useLayoutEffect(() => {
-    if (!card) return;
+    // Deleted while open (here or on another device): nothing left to share or edit.
+    if (!card) {
+      navigation.setOptions({ unstable_headerRightItems: () => [] });
+      return;
+    }
     navigation.setOptions({
       unstable_headerRightItems: () => [
         {
@@ -325,7 +329,7 @@ export default function CardDetailScreen({ route, navigation }: Props) {
       </Group>
 
       <Group>
-        <LinkRow first label="Delete Card" destructive onPress={() => confirmDelete(card, () => navigation.popToTop())} />
+        <LinkRow first label="Delete Card" destructive onPress={() => confirmDelete(card, () => navigation.goBack())} />
       </Group>
 
       <ImageViewerModal visible={viewerIndex !== null} images={images} initialIndex={viewerIndex ?? 0} onClose={() => setViewerIndex(null)} />

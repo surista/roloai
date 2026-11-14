@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { View, ActivityIndicator, StyleSheet } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../navigation/types';
@@ -14,11 +14,24 @@ type Props = NativeStackScreenProps<RootStackParamList, 'EditCard'>;
 /** Contacts' Edit sheet: Cancel / Done in the bar, photos replaceable, Delete at the bottom. */
 export default function EditCardScreen({ route, navigation }: Props) {
   const { cardId } = route.params;
-  const { all } = useCards();
+  const { all, loaded } = useCards();
   const card = useMemo(() => all.find((c) => c.id === cardId), [all, cardId]);
   // Seeded once: a snapshot arriving mid-edit (our own retake, another device) must not reset
   // what is being typed.
   const draft = useMemo(() => card, [card?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Set to leave on purpose (to view a duplicate, after deleting). The form's unsaved-changes
+  // guard reads `allowLeave` on render, so the navigation has to wait for the render that lifts
+  // it — navigating in the same tick would be blocked and ask "Discard Changes?".
+  const [leaving, setLeaving] = useState<(() => void) | null>(null);
+  useEffect(() => {
+    leaving?.();
+  }, [leaving]);
+
+  // Deleted on another device while this sheet was open: nothing left to edit.
+  useEffect(() => {
+    if (loaded && !card && !leaving) setLeaving(() => () => navigation.goBack());
+  }, [loaded, card, leaving, navigation]);
 
   if (!card || !draft) {
     return (
@@ -35,13 +48,15 @@ export default function EditCardScreen({ route, navigation }: Props) {
       backImageUri={card.imageBackUrl || undefined}
       saveLabel="Done"
       showCancel
+      allowLeave={leaving !== null}
       onSave={async (fields) => {
         await confirmNoDuplicate(
           fields,
-          (existingId) => {
-            navigation.goBack();
-            navigation.push('CardDetail', { cardId: existingId });
-          },
+          (existingId) =>
+            setLeaving(() => () => {
+              navigation.goBack();
+              navigation.push('CardDetail', { cardId: existingId });
+            }),
           cardId
         );
         await updateCard(cardId, fields);
@@ -60,7 +75,7 @@ export default function EditCardScreen({ route, navigation }: Props) {
         {
           label: 'Delete Card',
           destructive: true,
-          onPress: () => confirmDelete(card, () => navigation.popToTop()),
+          onPress: () => confirmDelete(card, () => setLeaving(() => () => navigation.pop(2))),
         },
       ]}
     />

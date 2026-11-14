@@ -6,8 +6,9 @@ import {
   signOut,
   type User,
 } from '@firebase/auth';
-import { auth } from './firebase';
+import { auth, usingEmulators } from './firebase';
 import { clearSpotlight } from './spotlight';
+import { cancelAllFollowUps } from './reminders';
 
 interface AuthContextValue {
   user: User | null;
@@ -25,6 +26,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     return onAuthStateChanged(auth, (nextUser) => {
+      // Development against the local emulators only: sign in to the throwaway emulator account
+      // so the signed-in screens can be exercised without anyone's real password.
+      const devEmail = process.env.EXPO_PUBLIC_EMULATOR_EMAIL;
+      const devPassword = process.env.EXPO_PUBLIC_EMULATOR_PASSWORD;
+      if (!nextUser && usingEmulators && devEmail && devPassword) {
+        void signInWithEmailAndPassword(auth, devEmail, devPassword).catch((e) =>
+          console.warn('Emulator sign-in failed:', e)
+        );
+      }
       setUser(nextUser);
       setInitializing(false);
     });
@@ -36,6 +46,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const logout = async () => {
     await clearSpotlight();
+    await cancelAllFollowUps();
     await signOut(auth);
   };
 

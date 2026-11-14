@@ -1,5 +1,6 @@
 import { getFunctions, httpsCallable, FunctionsError } from 'firebase/functions';
 import type { CardDraft } from '@roloai/shared';
+import './firebase'; // the emulator hookup must run before the functions instance is used
 
 /**
  * Thrown with a message that is safe to show the user as-is. The function distinguishes

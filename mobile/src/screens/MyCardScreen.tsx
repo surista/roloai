@@ -22,9 +22,9 @@ import { colors, type } from '../theme';
 type Props = NativeStackScreenProps<RootStackParamList, 'MyCard'>;
 
 const FIELDS: { key: keyof MyCard; label: string; keyboard?: 'phone-pad' | 'email-address' | 'url' }[] = [
-  { key: 'firstName', label: 'First name' },
-  { key: 'lastName', label: 'Last name' },
-  { key: 'jobTitle', label: 'Job title' },
+  { key: 'firstName', label: 'First' },
+  { key: 'lastName', label: 'Last' },
+  { key: 'jobTitle', label: 'Title' },
   { key: 'company', label: 'Company' },
   { key: 'phone', label: 'Phone', keyboard: 'phone-pad' },
   { key: 'email', label: 'Email', keyboard: 'email-address' },
@@ -113,72 +113,79 @@ export default function MyCardScreen({ navigation }: Props) {
       keyboardShouldPersistTaps="handled"
       automaticallyAdjustKeyboardInsets
     >
-      <Button
-        style={styles.scanButton}
-        onPress={() => navigation.navigate('Scan', { mine: true })}
-        accessibilityLabel="Scan my card"
-      >
-        <Text style={styles.scanText}>{stored ? 'Rescan my card' : 'Scan my card'}</Text>
-      </Button>
-      <Text style={styles.hint}>
-        Photograph your business card to fill this in{stored ? ' again (replaces what is saved)' : ''}, or type it below.
-      </Text>
-
-      {FIELDS.map(({ key, label, keyboard }) => (
-        <View key={key} style={styles.field}>
-          <Text style={styles.label}>{label}</Text>
-          <TextInput
-            style={styles.input}
-            placeholderTextColor={colors.placeholder}
-            accessibilityLabel={label}
-            value={form[key]}
-            onChangeText={(v) => update(key, v)}
-            keyboardType={keyboard}
-            autoCapitalize={keyboard ? 'none' : 'sentences'}
-            autoCorrect={false}
-          />
-        </View>
-      ))}
-
-      <Button
-        style={[styles.saveButton, !canSave && styles.disabled]}
-        disabled={!canSave || saving}
-        onPress={save}
-        accessibilityLabel="Save my card"
-      >
-        <Text style={styles.saveText}>{saving ? 'Saving…' : 'Save'}</Text>
-      </Button>
-
       {stored && vcard ? (
-        <>
-          <View style={styles.qr}>
-            {/* Always dark-on-white: scanners read inverted codes poorly, so this doesn't follow Dark Mode. */}
-            <View style={styles.qrTile} accessible accessibilityRole="image" accessibilityLabel="QR code with your contact details">
-              <QRCode value={vcard} size={220} />
-            </View>
-            <Text style={styles.hint}>Others can scan this with their camera to add you.</Text>
+        <View style={styles.qr}>
+          {/* Always dark-on-white: scanners read inverted codes poorly, so this doesn't follow Dark Mode. */}
+          <View style={styles.qrTile} accessible accessibilityRole="image" accessibilityLabel="QR code with your contact details">
+            <QRCode value={vcard} size={220} />
           </View>
-
+          <Text style={styles.hint}>Others can scan this with their camera to add you.</Text>
           <Button
             style={[styles.shareButton, busy && styles.disabled]}
             disabled={busy}
             onPress={() => presentShareMenu(stored, setBusy)}
             accessibilityLabel="Share my card"
           >
-            {busy ? <ActivityIndicator color={colors.onTint} /> : <Text style={styles.shareText}>Share my card</Text>}
+            {busy ? <ActivityIndicator color={colors.onTint} /> : <Text style={styles.shareText}>Share My Card</Text>}
           </Button>
+        </View>
+      ) : null}
 
+      <View style={styles.group}>
+        {FIELDS.map(({ key, label, keyboard }, i) => (
+          <View key={key} style={[styles.row, i > 0 && styles.rowSeparator]}>
+            <Text style={styles.rowLabel} accessibilityElementsHidden importantForAccessibility="no">
+              {label}
+            </Text>
+            <TextInput
+              style={styles.input}
+              placeholder={label}
+              placeholderTextColor={colors.placeholder}
+              accessibilityLabel={label}
+              value={form[key]}
+              onChangeText={(v) => update(key, v)}
+              keyboardType={keyboard}
+              autoCapitalize={keyboard ? 'none' : 'words'}
+              autoCorrect={false}
+              textContentType="none"
+            />
+          </View>
+        ))}
+      </View>
+
+      <Button
+        style={[styles.groupButton, !canSave && styles.disabled]}
+        disabled={!canSave || saving}
+        onPress={save}
+        accessibilityLabel="Save my card"
+      >
+        {saving ? <ActivityIndicator /> : <Text style={styles.groupButtonText}>Save</Text>}
+      </Button>
+      {stored && vcard ? null : (
+        <Text style={styles.footnote}>Save your details to get a QR code and share your card.</Text>
+      )}
+
+      <View style={styles.group}>
+        <Button
+          style={styles.groupRow}
+          onPress={() => navigation.navigate('Scan', { mine: true })}
+          accessibilityLabel={stored ? 'Rescan my card' : 'Scan my card'}
+        >
+          <Text style={styles.groupButtonText}>{stored ? 'Rescan My Card' : 'Scan My Card'}</Text>
+        </Button>
+        {stored ? (
           <Button
-            style={styles.photosButton}
+            style={[styles.groupRow, styles.rowSeparator]}
             onPress={() => navigation.navigate('CardDetail', { cardId: stored.id })}
             accessibilityLabel="Add photos of my card"
           >
-            <Text style={styles.photosText}>Add photos of my card</Text>
+            <Text style={styles.groupButtonText}>Add Photos of My Card</Text>
           </Button>
-        </>
-      ) : (
-        <Text style={styles.hint}>Save your details to get a QR code and share your card.</Text>
-      )}
+        ) : null}
+      </View>
+      <Text style={styles.footnote}>
+        Photograph your business card to fill this in{stored ? ' again (replaces what is saved)' : ''}.
+      </Text>
     </ScrollView>
   );
 }
@@ -186,47 +193,27 @@ export default function MyCardScreen({ navigation }: Props) {
 const styles = StyleSheet.create({
   screen: { backgroundColor: colors.groupedBackground },
   loading: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.groupedBackground },
-  container: { padding: 20, gap: 10, paddingBottom: 48 },
+  container: { padding: 16, gap: 12, paddingBottom: 48 },
   hint: { ...type.subheadline, color: colors.secondaryLabel, textAlign: 'center' },
-  qr: { alignItems: 'center', gap: 12, marginVertical: 12 },
+  footnote: { ...type.footnote, color: colors.secondaryLabel, marginHorizontal: 16, marginTop: -4, marginBottom: 8 },
+  qr: { alignItems: 'center', gap: 12, marginBottom: 12 },
   qrTile: { padding: 16, backgroundColor: '#fff', borderRadius: 16 },
-  field: { gap: 4 },
-  label: { ...type.footnote, color: colors.secondaryLabel, textTransform: 'uppercase', marginLeft: 4 },
-  input: {
-    ...type.body,
-    color: colors.label,
-    backgroundColor: colors.cell,
-    borderRadius: 10,
-    paddingHorizontal: 14,
-    paddingVertical: 11,
-  },
-  saveButton: {
-    borderRadius: 12,
-    minHeight: 50,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginTop: 8,
-    backgroundColor: colors.cell,
-  },
-  saveText: { ...type.headline, color: colors.tint },
+  group: { backgroundColor: colors.cell, borderRadius: 10, overflow: 'hidden' },
+  row: { flexDirection: 'row', alignItems: 'center', minHeight: 44, paddingLeft: 16, paddingRight: 12, gap: 10 },
+  rowSeparator: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.separator },
+  rowLabel: { ...type.body, color: colors.label, width: 82 },
+  input: { ...type.body, color: colors.label, flex: 1, paddingVertical: 11 },
+  groupRow: { minHeight: 44, alignItems: 'center', justifyContent: 'center' },
+  groupButton: { backgroundColor: colors.cell, borderRadius: 10, minHeight: 44, alignItems: 'center', justifyContent: 'center' },
+  groupButtonText: { ...type.body, color: colors.tint },
   shareButton: {
-    backgroundColor: colors.tint,
-    borderRadius: 12,
-    minHeight: 50,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginTop: 4,
-  },
-  scanButton: {
+    alignSelf: 'stretch',
     backgroundColor: colors.tint,
     borderRadius: 12,
     minHeight: 50,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  scanText: { ...type.headline, color: colors.onTint },
-  photosButton: { minHeight: 44, alignItems: 'center', justifyContent: 'center' },
-  photosText: { ...type.body, color: colors.tint },
   disabled: { opacity: 0.4 },
   shareText: { ...type.headline, color: colors.onTint },
 });

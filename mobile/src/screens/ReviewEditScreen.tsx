@@ -50,9 +50,12 @@ export default function ReviewEditScreen({ route, navigation }: Props) {
 
   // Where the card was received, looked up while it is being read so it is ready by Save. Only a
   // live scan has a "here": a queued scan was taken somewhere else, earlier.
-  const place = useRef<Promise<MetPlace>>(
+  // Lazy state, not useRef(captureMetPlace()): that would start a new GPS fix and geocode on
+  // every render and throw it away.
+  const [placePromise] = useState<Promise<MetPlace>>(() =>
     !queuedId && !mine ? captureMetPlace() : Promise.resolve({})
   );
+  const place = useRef(placePromise);
 
   // The scan reader caches each photo's read so the Scan screen can start it early. Once this
   // screen is gone nothing will ask for those reads again.
@@ -147,10 +150,11 @@ export default function ReviewEditScreen({ route, navigation }: Props) {
           // Your own card is not a duplicate of anyone, and replaces the one already set.
           const existing = myCardOf(await fetchAllCards());
           await saveScannedMyCard(existing, fields, draft?.rawOcrText, images.front, images.back);
-          leaveTo.current = () => navigation.navigate('MyCard');
+          // popTo, not navigate: navigate would push a second My Card over this saved form.
+          leaveTo.current = () => navigation.popTo('MyCard');
           return;
         }
-        // "View existing" leaves an unsaved card, so the form asks before discarding it.
+        // "View existing" opens the other card on top; Back returns here to finish this one.
         await confirmNoDuplicate(fields, (cardId) => navigation.navigate('CardDetail', { cardId }));
         const met = await place.current;
         const id = await createCard(

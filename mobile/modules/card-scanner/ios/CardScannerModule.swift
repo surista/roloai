@@ -19,6 +19,12 @@ public class CardScannerModule: Module {
       CardScannerModule.current = self
     }
 
+    // Signed out (no JS listener): a Spotlight tap must wait in pendingCardId, not be sent to
+    // nobody.
+    OnStopObserving {
+      if CardScannerModule.current === self { CardScannerModule.current = nil }
+    }
+
     /// The card a Spotlight tap launched the app for, once; nil afterwards.
     Function("takePendingCardId") { () -> String? in
       defer { CardScannerModule.pendingCardId = nil }

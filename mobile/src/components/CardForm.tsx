@@ -20,6 +20,7 @@ import { useScanWithReview } from '../lib/useScanWithReview';
 import { alertForScanFailure } from '../lib/cameraAlerts';
 import { SaveAborted } from '../lib/duplicateCheck';
 import { haptics } from '../lib/haptics';
+import { useCards } from '../lib/CardsContext';
 import { colors, type } from '../theme';
 
 /** Roughly a business card on its side (91×55mm), used until the real dimensions load. */
@@ -121,7 +122,9 @@ interface FormState {
   website: string;
   address: string;
   event: string;
-  tags: string;
+  tags: string[];
+  /** Typed in the tag field but not yet committed with a comma or Return; still saved. */
+  tagDraft: string;
   notes: string;
 }
 
@@ -136,7 +139,8 @@ function initialState(draft: CardDraft): FormState {
     website: draft.website ?? '',
     address: draft.address ?? '',
     event: draft.event ?? '',
-    tags: draft.tags.join(', '),
+    tags: [...draft.tags],
+    tagDraft: '',
     notes: draft.notes ?? '',
   };
 }
@@ -157,11 +161,18 @@ function toFields(s: FormState): CardFormFields {
     address: s.address.trim() || undefined,
     event: s.event.trim() || undefined,
     notes: s.notes.trim() || undefined,
-    tags: s.tags
-      .split(',')
-      .map((t) => t.trim())
-      .filter(Boolean),
+    tags: addTags(s.tags, s.tagDraft),
   };
+}
+
+/** `existing` plus the comma-separated tags in `text`, trimmed, without case-insensitive repeats. */
+function addTags(existing: string[], text: string): string[] {
+  const out = [...existing];
+  for (const raw of text.split(',')) {
+    const t = raw.trim();
+    if (t && !out.some((o) => o.toLowerCase() === t.toLowerCase())) out.push(t);
+  }
+  return out;
 }
 
 function pickLabel(options: string[], current: string): Promise<string | undefined> {
@@ -443,9 +454,14 @@ export default function CardForm({
         <Row label="Met at" first>
           <Input {...chain()} editable={editable} value={form.event} onChangeText={(v) => set('event', v)} placeholder="Event or occasion" autoCapitalize="sentences" />
         </Row>
-        <Row label="Tags">
-          <Input {...chain()} editable={editable} value={form.tags} onChangeText={(v) => set('tags', v)} placeholder="Comma separated" autoCapitalize="none" />
-        </Row>
+        <View style={styles.rowSeparator}>
+          <TagField
+            tags={form.tags}
+            draft={form.tagDraft}
+            editable={editable}
+            onChange={(tags, draft) => setForm((f) => ({ ...f, tags, tagDraft: draft }))}
+          />
+        </View>
         <Row label="Notes">
           <Input editable={editable} value={form.notes} onChangeText={(v) => set('notes', v)} placeholder="Notes" multiline />
         </Row>
@@ -473,8 +489,8 @@ function Section({ children }: { children: React.ReactNode }) {
 
 function Row({ label, first, children }: { label: string; first?: boolean; children: React.ReactNode }) {
   return (
-    <View style={[styles.row, !first && styles.rowSeparator]}>
-      <Text style={styles.rowLabel} accessibilityElementsHidden importantForAccessibility="no">
+    <View style={[styles.row, styles.rowTop, !first && styles.rowSeparator]}>
+      <Text style={[styles.rowLabel, styles.rowLabelTop]} accessibilityElementsHidden importantForAccessibility="no">
         {label}
       </Text>
       <View style={styles.rowValue}>{children}</View>
@@ -582,6 +598,119 @@ function MultiSection<T extends { label: string }>(props: {
   );
 }
 
+/**
+ * Tags as removable chips, like Mail's address field: Return or a comma turns the typed text into
+ * a chip, and tags already used elsewhere in the library are offered as you type so "Tokyo" and
+ * "tokyo " don't become two tags.
+ */
+function TagField({
+  tags,
+  draft,
+  editable,
+  onChange,
+}: {
+  tags: string[];
+  draft: string;
+  editable: boolean;
+  onChange: (tags: string[], draft: string) => void;
+}) {
+  const { all } = useCards();
+  const [focused, setFocused] = useState(false);
+  const known = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const c of all) for (const t of c.tags) counts.set(t, (counts.get(t) ?? 0) + 1);
+    return [...counts.entries()].sort((a, b) => b[1] - a[1]).map(([t]) => t);
+  }, [all]);
+  const query = draft.trim().toLowerCase();
+  const suggestions = focused
+    ? known
+        .filter((t) => !tags.some((x) => x.toLowerCase() === t.toLowerCase()))
+        .filter((t) => (query ? t.toLowerCase().includes(query) : true))
+        .slice(0, 8)
+    : [];
+
+  const commit = () => {
+    if (draft.trim()) onChange(addTags(tags, draft), '');
+  };
+
+  return (
+    <View style={styles.tagBlock}>
+      <View style={styles.tagWrap}>
+        <Text style={[styles.rowLabel, { marginTop: 6 }]} accessibilityElementsHidden importantForAccessibility="no">
+          Tags
+        </Text>
+        <View style={styles.tagChips}>
+          {tags.map((t) => (
+            <Button
+              key={t}
+              style={styles.chip}
+              disabled={!editable}
+              onPress={() => {
+                haptics.selection();
+                onChange(tags.filter((x) => x !== t), draft);
+              }}
+              accessibilityLabel={`Tag ${t}`}
+              accessibilityHint="Removes the tag"
+            >
+              <Text style={styles.chipText}>{t}</Text>
+              <SymbolView name="xmark" size={10} weight="semibold" tintColor={colors.secondaryLabel} />
+            </Button>
+          ))}
+          <Input
+            style={styles.tagInput}
+            editable={editable}
+            value={draft}
+            placeholder={tags.length ? 'Add Tag' : 'Tags'}
+            accessibilityLabel="Add tag"
+            autoCapitalize="none"
+            autoCorrect={false}
+            returnKeyType="done"
+            submitBehavior="submit"
+            onFocus={() => setFocused(true)}
+            onBlur={() => {
+              setFocused(false);
+              commit();
+            }}
+            onSubmitEditing={commit}
+            onKeyPress={({ nativeEvent }) => {
+              if (nativeEvent.key === 'Backspace' && !draft && tags.length) {
+                onChange(tags.slice(0, -1), '');
+              }
+            }}
+            onChangeText={(v) => {
+              if (v.includes(',')) onChange(addTags(tags, v), '');
+              else onChange(tags, v);
+            }}
+          />
+        </View>
+      </View>
+      {suggestions.length ? (
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          keyboardShouldPersistTaps="always"
+          contentContainerStyle={styles.suggestions}
+        >
+          {suggestions.map((t) => (
+            <Button
+              key={t}
+              style={[styles.chip, styles.suggestionChip]}
+              onPress={() => {
+                haptics.selection();
+                onChange(addTags(tags, t), '');
+              }}
+              accessibilityLabel={`Add tag ${t}`}
+            >
+              <SymbolView name="plus" size={10} weight="semibold" tintColor={colors.tint} />
+              <Text style={[styles.chipText, { color: colors.tint }]}>{t}</Text>
+            </Button>
+          ))}
+        </ScrollView>
+      ) : null}
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
   screen: { backgroundColor: colors.groupedBackground },
   container: { padding: 16, gap: 20, paddingBottom: 48 },
@@ -606,7 +735,7 @@ const styles = StyleSheet.create({
   // Height comes from the photo's own aspect ratio, capped so a portrait shot can't push the
   // form off the screen.
   preview: { width: '100%', maxHeight: 280, borderRadius: 10, backgroundColor: colors.tertiaryFill },
-  previewEmpty: { height: 160, alignItems: 'center', justifyContent: 'center' },
+  previewEmpty: { height: 96, alignItems: 'center', justifyContent: 'center' },
   footnote: { ...type.footnote, color: colors.secondaryLabel },
   section: { backgroundColor: colors.cell, borderRadius: 10, overflow: 'hidden' },
   row: {
@@ -620,6 +749,9 @@ const styles = StyleSheet.create({
   rowSeparator: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.separator },
   rowPressed: { backgroundColor: colors.fill },
   rowLabel: { ...type.body, color: colors.label, width: 82 },
+  // Labels sit on the first line of their value, which matters for multi-line Address/Notes.
+  rowTop: { alignItems: 'flex-start' },
+  rowLabelTop: { paddingTop: 11 },
   rowValue: { flex: 1 },
   input: { ...type.body, color: colors.label, paddingVertical: 11 },
   multiline: { minHeight: 66, textAlignVertical: 'top', paddingTop: 11 },
@@ -629,4 +761,20 @@ const styles = StyleSheet.create({
   actionRow: { minHeight: 44, alignItems: 'center', justifyContent: 'center' },
   actionText: { ...type.body, color: colors.tint },
   destructive: { color: colors.destructive },
+  tagBlock: { paddingVertical: 6 },
+  tagWrap: { flexDirection: 'row', alignItems: 'flex-start', paddingLeft: 16, paddingRight: 12, gap: 10 },
+  tagChips: { flex: 1, flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 6, minHeight: 32 },
+  chip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 14,
+    backgroundColor: colors.tertiaryFill,
+  },
+  chipText: { ...type.subheadline, color: colors.label },
+  tagInput: { flexGrow: 1, minWidth: 90, paddingVertical: 6 },
+  suggestions: { gap: 6, paddingHorizontal: 16, paddingTop: 8, paddingBottom: 4 },
+  suggestionChip: { backgroundColor: 'transparent', borderWidth: StyleSheet.hairlineWidth, borderColor: colors.separator },
 });

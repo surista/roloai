@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useCallback, useEffect } from 'react';
 import { View, ActivityIndicator, useColorScheme } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import {
@@ -14,10 +14,12 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import * as Notifications from 'expo-notifications';
 import { useQuickActionCallback } from 'expo-quick-actions/hooks';
 import { AuthProvider, useAuth } from './src/lib/AuthContext';
-import { CardsProvider } from './src/lib/CardsContext';
+import { CardsProvider, useCards } from './src/lib/CardsContext';
+import { useFollowUpSync } from './src/lib/reminders';
 import { cardIdFromResponse } from './src/lib/reminders';
 import { useQueueAutoRead } from './src/lib/queueReader';
 import { useSpotlightIndex } from './src/lib/spotlight';
+import { useDevRoute } from './src/lib/devRoute';
 import type { RootStackParamList } from './src/navigation/types';
 import LoginScreen from './src/screens/LoginScreen';
 import CardListScreen from './src/screens/CardListScreen';
@@ -39,11 +41,15 @@ const navigationRef = createNavigationContainerRef<RootStackParamList>();
 const linking: LinkingOptions<RootStackParamList> = {
   prefixes: ['roloai://'],
   config: {
+    // A cold launch from a link still has the list underneath, so Close/Back have somewhere to go.
+    initialRouteName: 'CardList',
     screens: {
       CardList: '',
       Scan: 'scan',
       CardDetail: 'card/:cardId',
       MyCard: 'mycard',
+      EditCard: 'card/:cardId/edit',
+      Settings: 'settings',
     },
   },
 };
@@ -66,13 +72,22 @@ function useExternalEntryPoints() {
 
   useEffect(() => {
     const cardId = cardIdFromResponse(lastResponse);
-    if (cardId) openCard(cardId);
+    if (!cardId) return;
+    // Handled once: the hook keeps returning the same response, so after a sign-out/in it would
+    // reopen this card.
+    Notifications.clearLastNotificationResponse();
+    openCard(cardId);
   }, [lastResponse]);
 
-  useQuickActionCallback((action) => {
-    if (action.id === 'scan') navigateWhenReady(() => navigationRef.navigate('Scan'));
-    if (action.id === 'mycard') navigateWhenReady(() => navigationRef.navigate('MyCard'));
-  });
+  // Stable: the hook re-runs the callback with the launch action whenever the callback changes,
+  // and this component re-renders on every library snapshot — an inline function reopened the
+  // scanner after each save on a launch from the Home Screen.
+  useQuickActionCallback(
+    useCallback((action: { id: string }) => {
+      if (action.id === 'scan') navigateWhenReady(() => navigationRef.navigate('Scan'));
+      if (action.id === 'mycard') navigateWhenReady(() => navigationRef.navigate('MyCard'));
+    }, [])
+  );
 
   useSpotlightIndex(openCard);
 }
@@ -81,6 +96,9 @@ function SignedInApp() {
   const scheme = useColorScheme();
   useExternalEntryPoints();
   useQueueAutoRead();
+  const { all, loaded } = useCards();
+  useFollowUpSync(all, loaded);
+  useDevRoute(navigationRef);
 
   return (
     <NavigationContainer
