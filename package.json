@@ -20,6 +20,10 @@
     "test": "vitest run"
   },
   "devDependencies": {
+    "expo-font": "~57.0.4",
     "vitest": "^4.1.11"
+  },
+  "overrides": {
+    "expo-font": "~57.0.4"
   }
 }

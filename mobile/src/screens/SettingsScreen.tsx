@@ -1,7 +1,18 @@
 import React, { useState } from 'react';
-import { View, Text, ScrollView, StyleSheet, Alert, ActivityIndicator } from 'react-native';
+import {
+  View,
+  Text,
+  ScrollView,
+  StyleSheet,
+  Alert,
+  ActionSheetIOS,
+  ActivityIndicator,
+  Linking,
+  Switch,
+} from 'react-native';
 import * as DocumentPicker from 'expo-document-picker';
 import { File } from 'expo-file-system';
+import { SymbolView, type SFSymbol } from 'expo-symbols';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import {
   BackupFormatError,
@@ -22,7 +33,11 @@ import type { RootStackParamList } from '../navigation/types';
 import { useAuth } from '../lib/AuthContext';
 import { fetchAllCards, importCards, restoreCards } from '../lib/cards';
 import { FILE_UTI, shareTextFile } from '../lib/shareFile';
+import { setPreference, usePreferences } from '../lib/preferences';
+import { requestLocationPermission } from '../lib/location';
+import { haptics } from '../lib/haptics';
 import { APP_VERSION } from '../lib/version';
+import { colors, type } from '../theme';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Settings'>;
 
@@ -32,18 +47,18 @@ const pluralCards = (n: number) => `${n} ${n === 1 ? 'card' : 'cards'}`;
 const newestFirst = (cards: Card[]) => [...cards].sort((a, b) => b.createdAt - a.createdAt);
 
 /**
- * Account, backup/import/export, and app info.
+ * Account, capture options, backup/import/export, and app info — in the iOS inset-grouped style.
  *
  * Import is the one bulk-destructive thing here (a restore overwrites by id), so picking a file
  * only parses it; nothing is written until the user has seen the counts and confirmed.
  */
 export default function SettingsScreen({ navigation }: Props) {
   const { user, logout } = useAuth();
+  const prefs = usePreferences();
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
-  /** Runs one action with the busy label showing, and turns a throw into the on-screen error. */
   const run = async (label: string, action: () => Promise<void>) => {
     if (busy) return;
     setBusy(label);
@@ -53,11 +68,8 @@ export default function SettingsScreen({ navigation }: Props) {
       await action();
     } catch (e) {
       console.error(`${label} failed:`, e);
-      setError(
-        e instanceof BackupFormatError
-          ? e.message
-          : `${label} failed. Check your connection and try again.`
-      );
+      haptics.error();
+      setError(e instanceof BackupFormatError ? e.message : `${label} failed. Check your connection and try again.`);
     } finally {
       setBusy(null);
     }
@@ -71,13 +83,9 @@ export default function SettingsScreen({ navigation }: Props) {
         return;
       }
       const now = new Date();
-      if (format === 'json') {
-        await shareTextFile(backupFileName(now), cardsToBackup(cards, now), FILE_UTI.json);
-      } else if (format === 'vcf') {
-        await shareTextFile(vCardFileName(now), cardsToVCard(cards), FILE_UTI.vcard);
-      } else {
-        await shareTextFile(`roloai-cards-${now.toISOString().slice(0, 10)}.csv`, cardsToCsv(cards), FILE_UTI.csv);
-      }
+      if (format === 'json') await shareTextFile(backupFileName(now), cardsToBackup(cards, now), FILE_UTI.json);
+      else if (format === 'vcf') await shareTextFile(vCardFileName(now), cardsToVCard(cards), FILE_UTI.vcard);
+      else await shareTextFile(`roloai-cards-${now.toISOString().slice(0, 10)}.csv`, cardsToCsv(cards), FILE_UTI.csv);
     });
 
   const confirm = (title: string, message: string, action: string) =>
@@ -96,15 +104,13 @@ export default function SettingsScreen({ navigation }: Props) {
   const handleImport = () =>
     run('Import', async () => {
       const picked = await DocumentPicker.getDocumentAsync({
-        // Any type: iOS labels .vcf and .json inconsistently across Files providers, so the
-        // filter would hide files the user can see elsewhere. The content decides below.
+        // Any type: iOS labels .vcf and .json inconsistently across Files providers.
         type: '*/*',
         copyToCacheDirectory: true,
       });
       if (picked.canceled) return;
       const asset = picked.assets[0];
       const text = await new File(asset.uri).text();
-
       if (asset.name.toLowerCase().endsWith('.vcf') || text.trimStart().startsWith('BEGIN:VCARD')) {
         await importVCards(asset.name, parseVCards(text));
       } else {
@@ -114,21 +120,20 @@ export default function SettingsScreen({ navigation }: Props) {
 
   const restoreBackup = async (fileName: string, cards: Card[]) => {
     const ok = await confirm(
-      'Restore backup?',
+      'Restore Backup?',
       `${pluralCards(cards.length)} in ${fileName}. Restoring overwrites any card that shares an id with one in the file.`,
       'Restore'
     );
     if (!ok) return;
     const count = await restoreCards(cards);
+    haptics.success();
     setNotice(`Restored ${pluralCards(count)}.`);
   };
 
   const importVCards = async (fileName: string, drafts: CardDraft[]) => {
     if (!drafts.length) throw new BackupFormatError('No contacts found in that file.');
-    // Unlike a backup, a vCard has no ids to match on, so importing twice would double the
-    // library. Contacts that look like someone already on file — or an earlier contact in the
-    // same file — are skipped; the count is reported so it is not silent.
-    // Your own card is not someone to dedupe against.
+    // A vCard has no ids to match on, so contacts that look like someone already on file — or an
+    // earlier contact in the same file — are skipped, and the count is reported.
     const known = withoutMine(await fetchAllCards());
     const fresh: CardDraft[] = [];
     drafts.forEach((draft, i) => {
@@ -142,109 +147,175 @@ export default function SettingsScreen({ navigation }: Props) {
       return;
     }
     const ok = await confirm(
-      'Import contacts?',
+      'Import Contacts?',
       `${fresh.length} new ${fresh.length === 1 ? 'contact' : 'contacts'} in ${fileName} will be added as cards.` +
         (skipped ? ` ${skipped} skipped as possible duplicates.` : ''),
       'Import'
     );
     if (!ok) return;
     const count = await importCards(fresh);
-    setNotice(
-      `Imported ${count} ${count === 1 ? 'contact' : 'contacts'}.` +
-        (skipped ? ` Skipped ${skipped} possible duplicates.` : '')
+    haptics.success();
+    setNotice(`Imported ${count} ${count === 1 ? 'contact' : 'contacts'}.` + (skipped ? ` Skipped ${skipped} possible duplicates.` : ''));
+  };
+
+  /** The system permission prompt is tied to this switch, so it always appears in context. */
+  const toggleLocation = async (on: boolean) => {
+    if (!on) return setPreference('recordLocation', false);
+    const { granted, canAskAgain } = await requestLocationPermission();
+    if (granted) {
+      await setPreference('recordLocation', true);
+      haptics.success();
+    } else if (!canAskAgain) {
+      Alert.alert('Location Is Off', 'To record where you meet people, allow location for RoloAI in Settings.', [
+        { text: 'Not Now', style: 'cancel' },
+        { text: 'Open Settings', onPress: () => void Linking.openSettings() },
+      ]);
+    }
+  };
+
+  const handleSignOut = () => {
+    ActionSheetIOS.showActionSheetWithOptions(
+      {
+        title: 'Sign out of RoloAI?',
+        message: 'Your cards stay in your account. Scans waiting to be read stay on this iPhone.',
+        options: ['Sign Out', 'Cancel'],
+        destructiveButtonIndex: 0,
+        cancelButtonIndex: 1,
+      },
+      (i) => {
+        if (i === 0) void logout();
+      }
     );
   };
 
   return (
-    <ScrollView contentContainerStyle={styles.container}>
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Account</Text>
-        <Text style={styles.value}>{user?.email ?? 'Not signed in'}</Text>
-        <Text style={styles.hint}>
-          This is the account that owns every card. Cards are stored against it, so signing in as
-          anyone else shows an empty library rather than this one.
-        </Text>
-        <Button style={styles.signOutButton} onPress={logout} accessibilityLabel="Sign out">
-          <Text style={styles.signOutText}>Sign out</Text>
-        </Button>
-      </View>
+    <ScrollView style={styles.screen} contentContainerStyle={styles.container} contentInsetAdjustmentBehavior="automatic">
+      <Group header="Account" footer="Every card is stored against this account and syncs to your other devices and the web app.">
+        <Row first symbol="person.crop.circle.fill" symbolBg={colors.tint} label={user?.email ?? 'Not signed in'} />
+      </Group>
 
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>My card</Text>
-        <Text style={styles.hint}>
-          Your own contact details, with a QR code others can scan. Stored on this device only.
-        </Text>
-        <Button style={styles.actionButton} onPress={() => navigation.navigate('MyCard')}>
-          <Text style={styles.actionText}>My Card</Text>
-        </Button>
-      </View>
+      <Group header="My Card" footer="Your own details, with a QR code others can scan. Synced with your account.">
+        <Row first symbol="person.text.rectangle.fill" symbolBg={colors.success} label="My Card" chevron onPress={() => navigation.navigate('MyCard')} />
+      </Group>
 
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Export and import</Text>
-        <Text style={styles.hint}>
-          Exports carry links to the card photos rather than the images themselves, so they
-          resolve only while you are signed in. The backup restores everything exactly; the
-          contacts file opens in Contacts and most CRMs.
-        </Text>
-        <Button style={styles.actionButton} disabled={!!busy} onPress={() => handleExport('json')}>
-          <Text style={styles.actionText}>Export backup (JSON)</Text>
-        </Button>
-        <Button style={styles.actionButton} disabled={!!busy} onPress={() => handleExport('vcf')}>
-          <Text style={styles.actionText}>Export contacts (.vcf)</Text>
-        </Button>
-        <Button style={styles.actionButton} disabled={!!busy} onPress={() => handleExport('csv')}>
-          <Text style={styles.actionText}>Export spreadsheet (.csv)</Text>
-        </Button>
-        <Button style={styles.actionButton} disabled={!!busy} onPress={handleImport}>
-          <Text style={styles.actionText}>Import backup or contacts</Text>
-        </Button>
-        <Text style={styles.hint}>
-          A .json backup restores cards under their original ids, overwriting any card with the
-          same id. A .vcf file adds new cards and skips ones that look like duplicates.
-        </Text>
-        {busy && (
-          <View style={styles.progress}>
-            <ActivityIndicator size="small" />
-            <Text style={styles.hint}>{busy === 'Import' ? 'Importing…' : 'Preparing export…'}</Text>
-          </View>
-        )}
-        {error && <Text style={styles.error}>{error}</Text>}
-        {notice && <Text style={styles.notice}>{notice}</Text>}
-      </View>
+      <Group
+        header="Scanning"
+        footer="Records the place each card was scanned — “Shibuya, Tokyo” — so you can remember where you met. Location is used only at the moment of scanning."
+      >
+        <Row first symbol="location.fill" symbolBg={colors.tint} label="Record Where I Meet People">
+          <Switch
+            value={prefs?.recordLocation ?? false}
+            onValueChange={(v) => void toggleLocation(v)}
+            accessibilityLabel="Record where I meet people"
+          />
+        </Row>
+      </Group>
 
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>About</Text>
-        <Text style={styles.value}>RoloAI v{APP_VERSION}</Text>
-      </View>
+      <Group
+        header="Shortcuts"
+        footer="Touch and hold the RoloAI icon on the Home Screen for Scan Card. In the Shortcuts app, an “Open URL” action with roloai://scan opens the scanner from Siri, the Action button or a widget."
+      >
+        <Row first symbol="bolt.fill" symbolBg={colors.warning} label="Open Shortcuts" chevron onPress={() => void Linking.openURL('shortcuts://')} />
+      </Group>
+
+      <Group
+        header="Export and Import"
+        footer="Exports link to the card photos rather than containing them, so the links work only while you’re signed in. A .json backup restores cards exactly, overwriting any with the same id; a .vcf file adds new cards and skips likely duplicates."
+      >
+        <Row first symbol="externaldrive.fill" symbolBg={colors.tint} label="Export Backup (.json)" disabled={!!busy} onPress={() => handleExport('json')} />
+        <Row symbol="person.2.fill" symbolBg={colors.tint} label="Export Contacts (.vcf)" disabled={!!busy} onPress={() => handleExport('vcf')} />
+        <Row symbol="tablecells.fill" symbolBg={colors.success} label="Export Spreadsheet (.csv)" disabled={!!busy} onPress={() => handleExport('csv')} />
+        <Row symbol="square.and.arrow.down.fill" symbolBg={colors.warning} label="Import Backup or Contacts" disabled={!!busy} onPress={handleImport} />
+      </Group>
+
+      {(busy || error || notice) && (
+        <View style={styles.status} accessibilityLiveRegion="polite">
+          {busy && <ActivityIndicator size="small" />}
+          {busy && <Text style={styles.footer}>{busy === 'Import' ? 'Importing…' : 'Preparing export…'}</Text>}
+          {error && <Text style={[styles.footer, { color: colors.destructive }]}>{error}</Text>}
+          {notice && <Text style={[styles.footer, { color: colors.success }]}>{notice}</Text>}
+        </View>
+      )}
+
+      <Group header="About">
+        <Row first label="Version" detail={APP_VERSION} />
+      </Group>
+
+      <Group>
+        <Button style={styles.signOut} pressedStyle={styles.rowPressed} hitSlop={undefined} onPress={handleSignOut}>
+          <Text style={styles.signOutText}>Sign Out</Text>
+        </Button>
+      </Group>
     </ScrollView>
   );
 }
 
+function Group({ header, footer, children }: { header?: string; footer?: string; children: React.ReactNode }) {
+  return (
+    <View>
+      {header && (
+        <Text style={styles.header} accessibilityRole="header">
+          {header}
+        </Text>
+      )}
+      <View style={styles.group}>{children}</View>
+      {footer && <Text style={[styles.footer, styles.footerSpacing]}>{footer}</Text>}
+    </View>
+  );
+}
+
+function Row(props: {
+  label: string;
+  first?: boolean;
+  symbol?: SFSymbol;
+  symbolBg?: typeof colors.tint;
+  detail?: string;
+  chevron?: boolean;
+  disabled?: boolean;
+  onPress?: () => void;
+  children?: React.ReactNode;
+}) {
+  const content = (
+    <>
+      {props.symbol && (
+        <View style={[styles.icon, { backgroundColor: props.symbolBg }]}>
+          <SymbolView name={props.symbol} size={16} tintColor={colors.onTint} />
+        </View>
+      )}
+      <View style={[styles.rowInner, !props.first && styles.rowSeparator]}>
+        <Text style={[styles.rowLabel, props.onPress && !props.chevron && styles.rowAction]} numberOfLines={2}>
+          {props.label}
+        </Text>
+        {props.detail && <Text style={styles.detail}>{props.detail}</Text>}
+        {props.children}
+        {props.chevron && <SymbolView name="chevron.right" size={13} tintColor={colors.tertiaryLabel} />}
+      </View>
+    </>
+  );
+  if (!props.onPress) return <View style={styles.row}>{content}</View>;
+  return (
+    <Button style={styles.row} pressedStyle={styles.rowPressed} hitSlop={undefined} disabled={props.disabled} onPress={props.onPress}>
+      {content}
+    </Button>
+  );
+}
+
 const styles = StyleSheet.create({
-  container: { padding: 16, gap: 24 },
-  section: { gap: 6 },
-  sectionTitle: { fontSize: 13, fontWeight: '600', color: '#888', textTransform: 'uppercase' },
-  value: { fontSize: 17 },
-  hint: { color: '#666', fontSize: 14, lineHeight: 20 },
-  actionButton: {
-    borderWidth: 1,
-    borderColor: '#ccc',
-    borderRadius: 8,
-    paddingVertical: 12,
-    alignItems: 'center',
-    marginTop: 4,
-  },
-  actionText: { fontSize: 16, fontWeight: '600', color: '#0a7cff' },
-  progress: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  error: { color: '#c00', fontSize: 14 },
-  notice: { color: '#1a7f37', fontSize: 14 },
-  signOutButton: {
-    marginTop: 10,
-    borderWidth: 1,
-    borderColor: '#c00',
-    borderRadius: 8,
-    paddingVertical: 12,
-    alignItems: 'center',
-  },
-  signOutText: { color: '#c00', fontWeight: '600', fontSize: 16 },
+  screen: { backgroundColor: colors.groupedBackground },
+  container: { padding: 16, gap: 24, paddingBottom: 48 },
+  header: { ...type.footnote, color: colors.secondaryLabel, textTransform: 'uppercase', marginLeft: 16, marginBottom: 6 },
+  footer: { ...type.footnote, color: colors.secondaryLabel },
+  footerSpacing: { marginHorizontal: 16, marginTop: 6 },
+  group: { backgroundColor: colors.cell, borderRadius: 10, overflow: 'hidden' },
+  row: { flexDirection: 'row', alignItems: 'center', paddingLeft: 16, minHeight: 44 },
+  rowPressed: { backgroundColor: colors.fill },
+  rowInner: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 8, minHeight: 44, paddingRight: 16, paddingVertical: 8, marginLeft: 0 },
+  rowSeparator: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.separator },
+  icon: { width: 29, height: 29, borderRadius: 7, alignItems: 'center', justifyContent: 'center', marginRight: 12 },
+  rowLabel: { ...type.body, color: colors.label, flex: 1 },
+  rowAction: { color: colors.tint },
+  detail: { ...type.body, color: colors.secondaryLabel },
+  status: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 16, flexWrap: 'wrap' },
+  signOut: { minHeight: 44, alignItems: 'center', justifyContent: 'center' },
+  signOutText: { ...type.body, color: colors.destructive },
 });

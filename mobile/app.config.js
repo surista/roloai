@@ -14,7 +14,8 @@ module.exports = {
     version: VERSION,
     orientation: 'portrait',
     icon: './assets/icon.png',
-    userInterfaceStyle: 'light',
+    // Follows the system appearance. Every colour in the app is a semantic system colour.
+    userInterfaceStyle: 'automatic',
     scheme: 'roloai',
     ios: {
       bundleIdentifier: 'com.roloai.mobile',
@@ -29,7 +30,47 @@ module.exports = {
     web: {
       favicon: './assets/favicon.png',
     },
-    plugins: ['expo-camera', 'expo-sharing'],
+    plugins: [
+      // Scanning never records audio, so no microphone prompt or purpose string.
+      ['expo-camera', { microphonePermission: false, recordAudioAndroid: false }],
+      'expo-sharing',
+      'expo-image',
+      'expo-notifications',
+      [
+        'expo-contacts',
+        {
+          contactsPermission:
+            'RoloAI adds the people whose cards you scan to Contacts when you ask it to.',
+        },
+      ],
+      [
+        'expo-image-picker',
+        {
+          photosPermission: 'RoloAI reads business cards from photos you choose.',
+          microphonePermission: false,
+        },
+      ],
+      [
+        'expo-location',
+        {
+          locationWhenInUsePermission:
+            'RoloAI records where you scan a card so you can remember where you met. This is used only if you turn it on in Settings.',
+          // When-In-Use only. Unused purpose strings with placeholder text are a review flag.
+          locationAlwaysAndWhenInUsePermission: false,
+          locationAlwaysPermission: false,
+          motionUsagePermission: false,
+        },
+      ],
+      [
+        'expo-quick-actions',
+        {
+          iosActions: [
+            { id: 'scan', title: 'Scan Card', icon: 'symbol:camera.viewfinder' },
+            { id: 'mycard', title: 'My Card', icon: 'symbol:qrcode' },
+          ],
+        },
+      ],
+    ],
     extra: {
       eas: {
         projectId: 'bda18c22-85c2-4d1b-b89e-066d31810f77',

@@ -40,6 +40,20 @@ final class CardScannerViewController: UIViewController {
   /// detection and encoding take a moment (far longer the first time on a freshly installed
   /// build), and a frozen camera with no sign of life reads as a hang.
   private let spinner = UIActivityIndicatorView(style: .large)
+  /// The manual shutter. Auto-capture needs a card it can find and hold still; a glossy card, a
+  /// dim room or a shaky hand can keep it from ever settling, and without this the only way out
+  /// was Cancel. It is also the accessible path: VoiceOver users cannot see the outline to aim.
+  private let shutterButton = UIButton(type: .custom)
+  private let torchButton = UIButton(type: .system)
+  /// Pill behind the hint so it stays legible over a bright card or a white desk.
+  private let hintBackground = UIVisualEffectView(effect: UIBlurEffect(style: .systemUltraThinMaterialDark))
+  /// Main queue only. The last hint shown, so VoiceOver hears each instruction once rather than
+  /// thirty times a second.
+  private var currentHint = ""
+  private var lastAnnouncedAt: CFTimeInterval = 0
+  /// Set on the main queue by the shutter, read and cleared on the video queue.
+  private let manualCaptureLock = NSLock()
+  private var manualCaptureRequested = false
 
   /// Held so the frame callback can ask whether the lens is still hunting. Reading
   /// `isAdjustingFocus` is the only way to know; a quad can sit perfectly still while the
@@ -154,21 +168,66 @@ final class CardScannerViewController: UIViewController {
     quadLayer.lineWidth = 3
     view.layer.addSublayer(quadLayer)
 
+    // Dynamic Type: the hint is the scanner's only instruction, so it must grow with the
+    // user's text size like every other label in the system camera UI.
+    hintBackground.layer.cornerRadius = 12
+    hintBackground.clipsToBounds = true
+    hintBackground.translatesAutoresizingMaskIntoConstraints = false
+    view.addSubview(hintBackground)
+
     hintLabel.text = "Point at a business card"
+    currentHint = hintLabel.text ?? ""
     hintLabel.textColor = .white
-    hintLabel.font = .systemFont(ofSize: 16, weight: .semibold)
+    hintLabel.font = .preferredFont(forTextStyle: .headline)
+    hintLabel.adjustsFontForContentSizeCategory = true
     hintLabel.textAlignment = .center
     hintLabel.numberOfLines = 0
+    hintLabel.accessibilityTraits = .updatesFrequently
     hintLabel.translatesAutoresizingMaskIntoConstraints = false
     view.addSubview(hintLabel)
 
-    let cancelButton = UIButton(type: .system)
-    cancelButton.setTitle("Cancel", for: .normal)
-    cancelButton.setTitleColor(.white, for: .normal)
-    cancelButton.titleLabel?.font = .systemFont(ofSize: 17, weight: .semibold)
+    var cancelConfig = UIButton.Configuration.plain()
+    cancelConfig.title = "Cancel"
+    cancelConfig.baseForegroundColor = .white
+    cancelConfig.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { attrs in
+      var a = attrs
+      a.font = UIFont.preferredFont(forTextStyle: .body).withWeight(.semibold)
+      return a
+    }
+    let cancelButton = UIButton(configuration: cancelConfig)
     cancelButton.addTarget(self, action: #selector(handleCancel), for: .touchUpInside)
     cancelButton.translatesAutoresizingMaskIntoConstraints = false
     view.addSubview(cancelButton)
+
+    // The standard camera shutter: a white disc inside a white ring.
+    shutterButton.translatesAutoresizingMaskIntoConstraints = false
+    shutterButton.layer.cornerRadius = 36
+    shutterButton.layer.borderWidth = 4
+    shutterButton.layer.borderColor = UIColor.white.cgColor
+    let disc = UIView()
+    disc.backgroundColor = .white
+    disc.layer.cornerRadius = 29
+    disc.isUserInteractionEnabled = false
+    disc.translatesAutoresizingMaskIntoConstraints = false
+    shutterButton.addSubview(disc)
+    shutterButton.accessibilityLabel = "Take Photo"
+    shutterButton.accessibilityHint = "Captures now, without waiting for the card to be detected."
+    shutterButton.addTarget(self, action: #selector(handleShutter), for: .touchUpInside)
+    shutterButton.addTarget(self, action: #selector(shutterDown), for: [.touchDown, .touchDragEnter])
+    shutterButton.addTarget(self, action: #selector(shutterUp), for: [.touchUpInside, .touchUpOutside, .touchCancel, .touchDragExit])
+    view.addSubview(shutterButton)
+
+    let symbolConfig = UIImage.SymbolConfiguration(textStyle: .title3, scale: .large)
+    torchButton.setImage(UIImage(systemName: "flashlight.off.fill", withConfiguration: symbolConfig), for: .normal)
+    torchButton.tintColor = .white
+    torchButton.backgroundColor = UIColor.black.withAlphaComponent(0.35)
+    torchButton.layer.cornerRadius = 22
+    torchButton.accessibilityLabel = "Flashlight"
+    torchButton.accessibilityValue = "Off"
+    torchButton.isHidden = true
+    torchButton.addTarget(self, action: #selector(toggleTorch), for: .touchUpInside)
+    torchButton.translatesAutoresizingMaskIntoConstraints = false
+    view.addSubview(torchButton)
 
     // Added last so it covers the preview, the quad, and the controls — a flash that leaves the
     // chrome punched out of it reads as a glitch rather than a shutter.
@@ -188,9 +247,26 @@ final class CardScannerViewController: UIViewController {
       hintLabel.centerXAnchor.constraint(equalTo: view.centerXAnchor),
       hintLabel.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor, constant: 24),
       hintLabel.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -24),
-      hintLabel.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -40),
-      cancelButton.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 20),
-      cancelButton.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 12)
+      hintLabel.bottomAnchor.constraint(equalTo: shutterButton.topAnchor, constant: -28),
+      hintBackground.leadingAnchor.constraint(equalTo: hintLabel.leadingAnchor, constant: -14),
+      hintBackground.trailingAnchor.constraint(equalTo: hintLabel.trailingAnchor, constant: 14),
+      hintBackground.topAnchor.constraint(equalTo: hintLabel.topAnchor, constant: -8),
+      hintBackground.bottomAnchor.constraint(equalTo: hintLabel.bottomAnchor, constant: 8),
+      shutterButton.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+      shutterButton.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -20),
+      shutterButton.widthAnchor.constraint(equalToConstant: 72),
+      shutterButton.heightAnchor.constraint(equalToConstant: 72),
+      disc.centerXAnchor.constraint(equalTo: shutterButton.centerXAnchor),
+      disc.centerYAnchor.constraint(equalTo: shutterButton.centerYAnchor),
+      disc.widthAnchor.constraint(equalToConstant: 58),
+      disc.heightAnchor.constraint(equalToConstant: 58),
+      cancelButton.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 8),
+      cancelButton.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 8),
+      cancelButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
+      torchButton.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -16),
+      torchButton.centerYAnchor.constraint(equalTo: cancelButton.centerYAnchor),
+      torchButton.widthAnchor.constraint(equalToConstant: 44),
+      torchButton.heightAnchor.constraint(equalToConstant: 44)
     ])
   }
 
@@ -214,6 +290,9 @@ final class CardScannerViewController: UIViewController {
     }
     session.addInput(input)
     captureDevice = device
+    if device.hasTorch {
+      DispatchQueue.main.async { [weak self] in self?.torchButton.isHidden = false }
+    }
 
     if session.canAddOutput(videoOutput) {
       videoOutput.alwaysDiscardsLateVideoFrames = true
@@ -284,6 +363,59 @@ final class CardScannerViewController: UIViewController {
     report(.cancelled)
   }
 
+  @objc private func handleShutter() {
+    manualCaptureLock.lock()
+    manualCaptureRequested = true
+    manualCaptureLock.unlock()
+  }
+
+  @objc private func shutterDown() {
+    UIView.animate(withDuration: 0.1) { self.shutterButton.transform = CGAffineTransform(scaleX: 0.9, y: 0.9) }
+  }
+
+  @objc private func shutterUp() {
+    UIView.animate(withDuration: 0.15) { self.shutterButton.transform = .identity }
+  }
+
+  private func takeManualCaptureRequest() -> Bool {
+    manualCaptureLock.lock()
+    defer { manualCaptureLock.unlock() }
+    let requested = manualCaptureRequested
+    manualCaptureRequested = false
+    return requested
+  }
+
+  @objc private func toggleTorch() {
+    guard let device = captureDevice, device.hasTorch else { return }
+    sessionQueue.async { [weak self] in
+      guard (try? device.lockForConfiguration()) != nil else { return }
+      let turnOn = device.torchMode != .on
+      if turnOn { try? device.setTorchModeOn(level: AVCaptureDevice.maxAvailableTorchLevel) } else { device.torchMode = .off }
+      device.unlockForConfiguration()
+      DispatchQueue.main.async {
+        let config = UIImage.SymbolConfiguration(textStyle: .title3, scale: .large)
+        self?.torchButton.setImage(UIImage(systemName: turnOn ? "flashlight.on.fill" : "flashlight.off.fill", withConfiguration: config), for: .normal)
+        self?.torchButton.tintColor = turnOn ? .systemYellow : .white
+        self?.torchButton.accessibilityValue = turnOn ? "On" : "Off"
+        UISelectionFeedbackGenerator().selectionChanged()
+      }
+    }
+  }
+
+  /// Updates the hint and, when it actually changed, tells VoiceOver. Main queue only.
+  private func setHint(_ text: String) {
+    guard text != currentHint else { return }
+    currentHint = text
+    hintLabel.text = text
+    // Throttled: detection flips between "Hold steady" and "Focusing…" several times a second as
+    // the lens hunts, and an announcement queue that long is worse than none.
+    let now = CACurrentMediaTime()
+    if UIAccessibility.isVoiceOverRunning, now - lastAnnouncedAt > 1.5 {
+      lastAnnouncedAt = now
+      UIAccessibility.post(notification: .announcement, argument: text)
+    }
+  }
+
   /// Stops the session, dismisses, and reports back — exactly once. Safe to call from any queue.
   private func report(_ outcome: CardScanOutcome) {
     DispatchQueue.main.async { [weak self] in
@@ -322,9 +454,15 @@ final class CardScannerViewController: UIViewController {
 
   /// Blinks the screen white to stand in for the shutter sound. Main queue only.
   private func playCaptureFlash() {
+    // The haptic is the shutter's real stand-in: it works with the screen at any brightness and
+    // for someone not looking at it.
+    UIImpactFeedbackGenerator(style: .medium).impactOccurred()
     flashView.alpha = 0
+    // A full-screen white blink is a lot to throw at someone who has asked for less motion; a
+    // soft dim says "taken" without it.
+    let peak: CGFloat = UIAccessibility.isReduceMotionEnabled ? 0.3 : 1
     UIView.animate(withDuration: Self.flashInDuration, delay: 0, options: .curveEaseOut) {
-      self.flashView.alpha = 1
+      self.flashView.alpha = peak
     } completion: { _ in
       UIView.animate(withDuration: Self.flashOutDuration, delay: 0, options: .curveEaseIn) {
         self.flashView.alpha = 0
@@ -343,7 +481,8 @@ final class CardScannerViewController: UIViewController {
     }
     DispatchQueue.main.async { [weak self] in
       self?.spinner.stopAnimating()
-      self?.hintLabel.text = "Couldn't read that one — try again"
+      self?.shutterButton.isEnabled = true
+      self?.setHint("Couldn’t read that one — try again")
     }
   }
 }
@@ -380,6 +519,14 @@ extension CardScannerViewController: AVCaptureVideoDataOutputSampleBufferDelegat
     let handler = VNImageRequestHandler(ciImage: detectionImage, orientation: .right, options: [:])
     try? handler.perform([request])
 
+    // The shutter takes this frame as it is: cropped to the card if one is in view, otherwise
+    // the whole frame, which the review step can still rotate or retake.
+    if takeManualCaptureRequest() {
+      let found = request.results?.first.flatMap { $0.confidence >= 0.4 && Self.area(of: $0) >= 0.05 ? $0 : nil }
+      fire(buffer: buffer, quad: found)
+      return
+    }
+
     guard let quad = request.results?.first,
           quad.confidence >= minimumConfidence,
           Self.area(of: quad) >= minimumQuadArea else {
@@ -390,7 +537,7 @@ extension CardScannerViewController: AVCaptureVideoDataOutputSampleBufferDelegat
       sharpestSeen = 0
       DispatchQueue.main.async { [weak self] in
         self?.quadLayer.path = nil
-        self?.hintLabel.text = "Point at a business card"
+        self?.setHint("Point at a business card")
       }
       return
     }
@@ -416,7 +563,7 @@ extension CardScannerViewController: AVCaptureVideoDataOutputSampleBufferDelegat
     let settled = stableCount >= requiredStableFrames
     DispatchQueue.main.async { [weak self] in
       self?.draw(quad)
-      self?.hintLabel.text = focusing ? "Focusing…" : (settled ? "Capturing…" : "Hold steady")
+      self?.setHint(focusing ? "Focusing…" : (settled ? "Capturing…" : "Hold steady"))
     }
 
     // Aim focus and exposure at the card, not at whatever is in the middle of the frame: with the
@@ -445,6 +592,11 @@ extension CardScannerViewController: AVCaptureVideoDataOutputSampleBufferDelegat
     }
     bestFrame = nil
     burstCount = 0
+    fire(buffer: best.buffer, quad: best.quad)
+  }
+
+  /// Takes the shot: flash, crop (when there is a quad), encode, report. Video queue only.
+  private func fire(buffer: CVPixelBuffer, quad: VNRectangleObservation?) {
     hasFired = true
 
     // Flash first. This is the shutter moment as the user experiences it, and the crop and
@@ -452,15 +604,14 @@ extension CardScannerViewController: AVCaptureVideoDataOutputSampleBufferDelegat
     let flashEndsAt = DispatchTime.now() + Self.flashInDuration + Self.flashOutDuration
     DispatchQueue.main.async { [weak self] in
       self?.playCaptureFlash()
-      self?.hintLabel.text = "Processing…"
+      self?.setHint("Processing…")
+      self?.shutterButton.isEnabled = false
       self?.spinner.startAnimating()
     }
 
     // The frame the quad was measured on, so its corners already describe this exact image.
-    // The old path re-detected on a separately captured still, which could disagree with the
-    // outline the user had just been shown.
-    let upright = CIImage(cvPixelBuffer: best.buffer).oriented(.right)
-    let card = Self.uprightCard(Self.crop(upright, to: best.quad))
+    let upright = CIImage(cvPixelBuffer: buffer).oriented(.right)
+    let card = quad.map { Self.uprightCard(Self.crop(upright, to: $0)) } ?? upright
     guard let path = Self.write(Self.sharpened(card)) else {
       resumeAfterFailedCapture()
       return
@@ -782,6 +933,24 @@ extension CardScannerViewController {
     }
   }
 
+  /**
+   Finds the card in a photo from the library and returns it cropped and upright, the same way a
+   live capture is processed. When no card edge can be found, the photo is returned as it is (with
+   its EXIF orientation applied) so the owner can still use it. Runs synchronously; call off main.
+   */
+  static func cropCard(fromFile url: URL) -> String? {
+    guard let image = CIImage(contentsOf: url, options: [.applyOrientationProperty: true]) else { return nil }
+    let longSide = max(image.extent.width, image.extent.height)
+    let scale = min(1, detectionLongSide / longSide)
+    let probe = image.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
+    let request = VNDetectDocumentSegmentationRequest()
+    try? VNImageRequestHandler(ciImage: probe, orientation: .up, options: [:]).perform([request])
+    if let quad = request.results?.first, quad.confidence >= 0.5, area(of: quad) >= 0.05 {
+      return write(sharpened(uprightCard(crop(image, to: quad))))
+    }
+    return write(image)
+  }
+
   private static func write(_ image: CIImage) -> String? {
     guard let colorSpace = image.colorSpace ?? CGColorSpace(name: CGColorSpace.sRGB),
           let data = ciContext.jpegRepresentation(
@@ -799,5 +968,13 @@ extension CardScannerViewController {
     } catch {
       return nil
     }
+  }
+}
+
+private extension UIFont {
+  /// The same Dynamic Type style at a heavier weight.
+  func withWeight(_ weight: UIFont.Weight) -> UIFont {
+    let descriptor = fontDescriptor.addingAttributes([.traits: [UIFontDescriptor.TraitKey.weight: weight]])
+    return UIFont(descriptor: descriptor, size: 0)
   }
 }

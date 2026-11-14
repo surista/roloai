@@ -3,6 +3,7 @@ import { File, Paths } from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 import { cardImageFileName, cardToVCard, type Card } from '@roloai/shared';
 import { FILE_UTI, safeFileName, shareTextFile } from './shareFile';
+import CardScanner from '../../modules/card-scanner';
 
 export type ImageSide = 'front' | 'back';
 
@@ -26,21 +27,10 @@ async function shareImageFile(file: File): Promise<void> {
   await Sharing.shareAsync(file.uri, { UTI: 'public.jpeg', mimeType: 'image/jpeg' });
 }
 
-/** Resolves true for "Share back", false for "Done". */
-function askShareBack(): Promise<boolean> {
-  return new Promise((resolve) => {
-    Alert.alert('Share the back now?', undefined, [
-      { text: 'Done', style: 'cancel', onPress: () => resolve(false) },
-      { text: 'Share back', onPress: () => resolve(true) },
-    ], { cancelable: true, onDismiss: () => resolve(false) });
-  });
-}
-
 /**
- * Shares card photos. expo-sharing takes ONE file per call, so `both` is sequential: the front
- * first and, once that sheet is dismissed, a prompt before the back (a second sheet opening
- * unasked would feel like a glitch). Both are downloaded up front so the prompt-to-sheet gap is
- * instant. Throws on a failed download; the caller shows the alert.
+ * Shares card photos. `both` goes through the native module's share sheet, which (unlike
+ * expo-sharing) takes several files at once — the old flow shared the front, then asked before
+ * opening a second sheet for the back. Throws on a failed download; the caller shows the alert.
  */
 export async function shareCardImages(card: Card, which: ImageSide | 'both'): Promise<void> {
   if (!(await Sharing.isAvailableAsync())) {
@@ -54,8 +44,7 @@ export async function shareCardImages(card: Card, which: ImageSide | 'both'): Pr
     downloadCardImage(card, 'front'),
     downloadCardImage(card, 'back'),
   ]);
-  await shareImageFile(front);
-  if (await askShareBack()) await shareImageFile(back);
+  await CardScanner.shareFiles([front.uri, back.uri]);
 }
 
 /** Shares the contact as a .vcf. The photo link is left out: it is a signed-in-only storage url. */
@@ -73,11 +62,11 @@ export function presentShareMenu(card: Card, setBusy: (busy: boolean) => void): 
   const hasFront = Boolean(card.imageUrl);
   const hasBack = Boolean(card.imageBackUrl);
   const options: { label: string; run: () => Promise<void>; photos: boolean }[] = [
-    { label: 'Contact (.vcf)', run: () => shareCardContact(card), photos: false },
+    { label: 'Contact Card', run: () => shareCardContact(card), photos: false },
   ];
-  if (hasFront) options.push({ label: 'Front photo', run: () => shareCardImages(card, 'front'), photos: true });
-  if (hasBack) options.push({ label: 'Back photo', run: () => shareCardImages(card, 'back'), photos: true });
-  if (hasFront && hasBack) options.push({ label: 'Both photos', run: () => shareCardImages(card, 'both'), photos: true });
+  if (hasFront) options.push({ label: 'Front Photo', run: () => shareCardImages(card, 'front'), photos: true });
+  if (hasBack) options.push({ label: 'Back Photo', run: () => shareCardImages(card, 'back'), photos: true });
+  if (hasFront && hasBack) options.push({ label: 'Both Photos', run: () => shareCardImages(card, 'both'), photos: true });
 
   ActionSheetIOS.showActionSheetWithOptions(
     {
@@ -94,7 +83,7 @@ export function presentShareMenu(card: Card, setBusy: (busy: boolean) => void): 
       } catch (e) {
         console.error('Share failed:', e);
         Alert.alert(
-          'Could not share',
+          'Couldn’t Share',
           choice.photos
             ? 'The photo could not be downloaded. Check your connection and try again.'
             : 'Something went wrong opening the share sheet.'

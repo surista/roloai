@@ -7,6 +7,7 @@ import {
   type User,
 } from '@firebase/auth';
 import { auth } from './firebase';
+import { clearSpotlight } from './spotlight';
 
 interface AuthContextValue {
   user: User | null;
@@ -34,6 +35,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   const logout = async () => {
+    await clearSpotlight();
     await signOut(auth);
   };
 

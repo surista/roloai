@@ -16,6 +16,8 @@ import {
   type MyCard,
 } from '../lib/myCard';
 import { presentShareMenu } from '../lib/shareCardImages';
+import { haptics } from '../lib/haptics';
+import { colors, type } from '../theme';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'MyCard'>;
 
@@ -81,9 +83,11 @@ export default function MyCardScreen({ navigation }: Props) {
     try {
       await saveMyCard(myCardToFields(form, stored ?? undefined), stored?.id);
       setDirty(false);
+      haptics.success();
     } catch (e) {
       console.error('Could not save My Card:', e);
-      Alert.alert('Could not save', 'Check your connection and try again.');
+      haptics.error();
+      Alert.alert('Couldn’t Save', 'Check your connection and try again.');
     } finally {
       setSaving(false);
     }
@@ -103,6 +107,8 @@ export default function MyCardScreen({ navigation }: Props) {
 
   return (
     <ScrollView
+      style={styles.screen}
+      contentInsetAdjustmentBehavior="automatic"
       contentContainerStyle={styles.container}
       keyboardShouldPersistTaps="handled"
       automaticallyAdjustKeyboardInsets
@@ -123,6 +129,8 @@ export default function MyCardScreen({ navigation }: Props) {
           <Text style={styles.label}>{label}</Text>
           <TextInput
             style={styles.input}
+            placeholderTextColor={colors.placeholder}
+            accessibilityLabel={label}
             value={form[key]}
             onChangeText={(v) => update(key, v)}
             keyboardType={keyboard}
@@ -144,7 +152,10 @@ export default function MyCardScreen({ navigation }: Props) {
       {stored && vcard ? (
         <>
           <View style={styles.qr}>
-            <QRCode value={vcard} size={220} />
+            {/* Always dark-on-white: scanners read inverted codes poorly, so this doesn't follow Dark Mode. */}
+            <View style={styles.qrTile} accessible accessibilityRole="image" accessibilityLabel="QR code with your contact details">
+              <QRCode value={vcard} size={220} />
+            </View>
             <Text style={styles.hint}>Others can scan this with their camera to add you.</Text>
           </View>
 
@@ -154,7 +165,7 @@ export default function MyCardScreen({ navigation }: Props) {
             onPress={() => presentShareMenu(stored, setBusy)}
             accessibilityLabel="Share my card"
           >
-            {busy ? <ActivityIndicator color="#fff" /> : <Text style={styles.shareText}>Share my card</Text>}
+            {busy ? <ActivityIndicator color={colors.onTint} /> : <Text style={styles.shareText}>Share my card</Text>}
           </Button>
 
           <Button
@@ -173,38 +184,49 @@ export default function MyCardScreen({ navigation }: Props) {
 }
 
 const styles = StyleSheet.create({
-  loading: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+  screen: { backgroundColor: colors.groupedBackground },
+  loading: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.groupedBackground },
   container: { padding: 20, gap: 10, paddingBottom: 48 },
-  hint: { color: '#666', fontSize: 14, lineHeight: 20, textAlign: 'center' },
+  hint: { ...type.subheadline, color: colors.secondaryLabel, textAlign: 'center' },
   qr: { alignItems: 'center', gap: 12, marginVertical: 12 },
-  field: { gap: 2 },
-  label: { fontSize: 13, color: '#666' },
-  input: { borderWidth: 1, borderColor: '#ccc', borderRadius: 8, padding: 10, fontSize: 16 },
-  saveButton: {
-    borderWidth: 1,
-    borderColor: '#111',
+  qrTile: { padding: 16, backgroundColor: '#fff', borderRadius: 16 },
+  field: { gap: 4 },
+  label: { ...type.footnote, color: colors.secondaryLabel, textTransform: 'uppercase', marginLeft: 4 },
+  input: {
+    ...type.body,
+    color: colors.label,
+    backgroundColor: colors.cell,
     borderRadius: 10,
-    padding: 14,
-    alignItems: 'center',
-    marginTop: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 11,
   },
-  saveText: { color: '#111', fontWeight: '700', fontSize: 16 },
-  shareButton: {
-    backgroundColor: '#111',
-    borderRadius: 10,
-    padding: 16,
+  saveButton: {
+    borderRadius: 12,
+    minHeight: 50,
     alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 8,
+    backgroundColor: colors.cell,
+  },
+  saveText: { ...type.headline, color: colors.tint },
+  shareButton: {
+    backgroundColor: colors.tint,
+    borderRadius: 12,
+    minHeight: 50,
+    alignItems: 'center',
+    justifyContent: 'center',
     marginTop: 4,
   },
   scanButton: {
-    backgroundColor: '#111',
-    borderRadius: 10,
-    padding: 16,
+    backgroundColor: colors.tint,
+    borderRadius: 12,
+    minHeight: 50,
     alignItems: 'center',
+    justifyContent: 'center',
   },
-  scanText: { color: '#fff', fontWeight: '700', fontSize: 16 },
-  photosButton: { padding: 12, alignItems: 'center' },
-  photosText: { color: '#0a7cff', fontWeight: '600', fontSize: 16 },
+  scanText: { ...type.headline, color: colors.onTint },
+  photosButton: { minHeight: 44, alignItems: 'center', justifyContent: 'center' },
+  photosText: { ...type.body, color: colors.tint },
   disabled: { opacity: 0.4 },
-  shareText: { color: '#fff', fontWeight: '700', fontSize: 16 },
+  shareText: { ...type.headline, color: colors.onTint },
 });

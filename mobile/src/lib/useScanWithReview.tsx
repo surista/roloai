@@ -4,6 +4,7 @@ import { StatusBar } from 'expo-status-bar';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Button from '../components/Button';
 import { alertForScanFailure } from './cameraAlerts';
+import { haptics } from './haptics';
 import { rotateImage, scanCardEdge, type CardScanResult } from './documentScanner';
 
 /**
@@ -130,13 +131,28 @@ export function useScanWithReview() {
       >
         {/* Solid black backdrop — the app's "auto" (dark) status bar would be invisible. */}
         <StatusBar style="light" />
-        {label && <Text style={styles.label}>{label}</Text>}
-        <Image source={{ uri: capture.uri }} style={styles.preview} resizeMode="contain" />
-        <Button style={styles.rotateButton} onPress={handleRotate} disabled={rotating}>
+        {label && (
+          <Text style={styles.label} accessibilityRole="header">
+            {label}
+          </Text>
+        )}
+        <Image
+          source={{ uri: capture.uri }}
+          style={styles.preview}
+          resizeMode="contain"
+          accessible
+          accessibilityLabel="The photo just taken"
+        />
+        <Button
+          style={styles.rotateButton}
+          onPress={handleRotate}
+          disabled={rotating}
+          accessibilityLabel="Rotate a quarter turn clockwise"
+        >
           {rotating ? (
             <ActivityIndicator size="small" color="#fff" />
           ) : (
-            <Text style={styles.rotateButtonText}>Rotate 90°</Text>
+            <Text style={styles.rotateButtonText}>Rotate</Text>
           )}
         </Button>
         <View style={styles.buttonRow}>
@@ -148,7 +164,10 @@ export function useScanWithReview() {
           </Button>
           <Button
             style={styles.acceptButton}
-            onPress={() => settle({ status: 'ok', uri: capture.uri })}
+            onPress={() => {
+              haptics.selection();
+              settle({ status: 'ok', uri: capture.uri });
+            }}
           >
             <Text style={styles.acceptButtonText}>Accept</Text>
           </Button>
@@ -157,7 +176,19 @@ export function useScanWithReview() {
     </Modal>
   ) : null;
 
-  return { scan, reviewModal };
+  /**
+   * Puts an existing photo (one picked from the library) through the same review step, so a card
+   * imported from Photos can be rotated, retaken with the camera, or accepted like any capture.
+   */
+  const review = useCallback((uri: string, scanLabel?: string): Promise<CardScanResult> => {
+    return new Promise((resolve) => {
+      resolverRef.current = resolve;
+      setLabel(scanLabel);
+      showCapture(uri);
+    });
+  }, []);
+
+  return { scan, review, reviewModal };
 }
 
 const styles = StyleSheet.create({

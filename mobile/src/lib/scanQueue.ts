@@ -1,4 +1,5 @@
 import { Directory, File, Paths } from 'expo-file-system';
+import type { CardDraft } from '@roloai/shared';
 
 /**
  * Scans waiting to be read, for when there is no network at the moment of scanning.
@@ -13,6 +14,11 @@ export interface QueuedScan {
   queuedAt: number;
   frontFile: string;
   backFile?: string;
+  /**
+   * Set once the background reader has read the scan (see queueReader.ts). The photo files are
+   * then the upload-size renders, so review can save them as-is.
+   */
+  draft?: CardDraft;
 }
 
 // Manifest operations are kept pure so they stay obvious; the file handling is below.
@@ -103,4 +109,29 @@ export async function removeQueuedScan(id: string): Promise<void> {
       console.warn('Could not delete queued photo:', e);
     }
   }
+}
+
+/**
+ * Records a background read: replaces the photos with their upload-size renders and stores the
+ * draft. A no-op if the entry was removed meanwhile (reviewed by hand, or discarded).
+ */
+export async function markQueuedScanRead(
+  id: string,
+  draft: CardDraft,
+  frontRendered: string,
+  backRendered?: string
+): Promise<void> {
+  const entries = await listQueuedScans();
+  const entry = entries.find((e) => e.id === id);
+  if (!entry || entry.draft) return;
+  const replace = (source: string, name: string) => {
+    const target = new File(queueDir(), name);
+    if (target.exists) target.delete();
+    new File(source).copy(target);
+  };
+  replace(frontRendered, entry.frontFile);
+  if (backRendered && entry.backFile) replace(backRendered, entry.backFile);
+  // Re-read: another write may have landed during the copies.
+  const latest = await listQueuedScans();
+  await saveManifest(latest.map((e) => (e.id === id ? { ...e, draft } : e)));
 }

@@ -17,6 +17,7 @@ import {
 import Button from '../components/Button';
 import { useAuth } from '../lib/AuthContext';
 import { APP_VERSION } from '../lib/version';
+import { colors, type } from '../theme';
 
 export default function LoginScreen() {
   const { login, resetPassword } = useAuth();
@@ -77,6 +78,7 @@ export default function LoginScreen() {
         <TextInput
           style={styles.input}
           placeholder="Email"
+          placeholderTextColor={colors.placeholder}
           autoCapitalize="none"
           autoCorrect={false}
           keyboardType="email-address"
@@ -94,6 +96,7 @@ export default function LoginScreen() {
           ref={passwordRef}
           style={styles.input}
           placeholder="Password"
+          placeholderTextColor={colors.placeholder}
           secureTextEntry
           textContentType="password"
           autoComplete="current-password"
@@ -102,8 +105,8 @@ export default function LoginScreen() {
           value={password}
           onChangeText={setPassword}
         />
-        {error && <Text style={styles.error}>{error}</Text>}
-        {notice && <Text style={styles.notice}>{notice}</Text>}
+        {error && <Text style={styles.error} accessibilityLiveRegion="assertive">{error}</Text>}
+        {notice && <Text style={styles.notice} accessibilityLiveRegion="polite">{notice}</Text>}
         <Button
           style={styles.button}
           onPress={handleLogin}
@@ -111,7 +114,7 @@ export default function LoginScreen() {
           accessibilityLabel="Sign In"
           accessibilityState={{ busy: loading }}
         >
-          {loading ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>Sign In</Text>}
+          {loading ? <ActivityIndicator color={colors.onTint} /> : <Text style={styles.buttonText}>Sign In</Text>}
         </Button>
         <Button
           style={styles.linkButton}
@@ -131,28 +134,30 @@ export default function LoginScreen() {
 }
 
 const styles = StyleSheet.create({
-  flex: { flex: 1 },
+  flex: { flex: 1, backgroundColor: colors.background },
   container: { flexGrow: 1, justifyContent: 'center', padding: 24, gap: 12 },
   logo: { width: 96, height: 96, borderRadius: 22, alignSelf: 'center', marginBottom: 16 },
-  title: { fontSize: 32, fontWeight: '700', textAlign: 'center', marginBottom: 24 },
+  title: { ...type.largeTitle, color: colors.label, textAlign: 'center', marginBottom: 24 },
   input: {
-    borderWidth: 1,
-    borderColor: '#ccc',
-    borderRadius: 8,
-    padding: 12,
-    fontSize: 16,
+    ...type.body,
+    color: colors.label,
+    backgroundColor: colors.secondaryBackground,
+    borderRadius: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 13,
   },
   button: {
-    backgroundColor: '#111',
-    borderRadius: 8,
-    padding: 14,
+    backgroundColor: colors.tint,
+    borderRadius: 12,
+    minHeight: 50,
     alignItems: 'center',
+    justifyContent: 'center',
     marginTop: 8,
   },
-  buttonText: { color: '#fff', fontWeight: '600', fontSize: 16 },
-  linkButton: { alignSelf: 'center', paddingVertical: 8, paddingHorizontal: 12 },
-  linkButtonText: { color: '#0a7cff', fontWeight: '600', fontSize: 15 },
-  error: { color: '#c00', textAlign: 'center' },
-  notice: { color: '#1a7f37', textAlign: 'center' },
-  version: { color: '#888', fontSize: 12, textAlign: 'center', marginTop: 8 },
+  buttonText: { ...type.headline, color: colors.onTint },
+  linkButton: { alignSelf: 'center', minHeight: 44, justifyContent: 'center', paddingHorizontal: 12 },
+  linkButtonText: { ...type.body, color: colors.tint },
+  error: { ...type.subheadline, color: colors.destructive, textAlign: 'center' },
+  notice: { ...type.subheadline, color: colors.success, textAlign: 'center' },
+  version: { ...type.caption, color: colors.tertiaryLabel, textAlign: 'center', marginTop: 8 },
 });

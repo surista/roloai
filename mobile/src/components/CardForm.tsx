@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -7,43 +7,34 @@ import {
   Image,
   StyleSheet,
   ActivityIndicator,
+  ActionSheetIOS,
   Alert,
 } from 'react-native';
-import { relabelPhones, relabelEmails, type CardDraft } from '@roloai/shared';
+import { useNavigation, usePreventRemove } from '@react-navigation/native';
+import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import { SymbolView } from 'expo-symbols';
+import type { CardDraft, CardEmail, CardPhone } from '@roloai/shared';
 import Button from './Button';
 import ImageViewerModal from './ImageViewerModal';
 import { useScanWithReview } from '../lib/useScanWithReview';
 import { alertForScanFailure } from '../lib/cameraAlerts';
 import { SaveAborted } from '../lib/duplicateCheck';
-
-function joinPhones(phones: { number: string }[]): string {
-  return phones.map((p) => p.number).join(', ');
-}
-function joinEmails(emails: { address: string }[]): string {
-  return emails.map((e) => e.address).join(', ');
-}
-function splitToList(value: string): string[] {
-  return value
-    .split(',')
-    .map((v) => v.trim())
-    .filter(Boolean);
-}
+import { haptics } from '../lib/haptics';
+import { colors, type } from '../theme';
 
 /** Roughly a business card on its side (91×55mm), used until the real dimensions load. */
 const CARD_ASPECT = 91 / 55;
 
+/** The labels Contacts offers, in its order. A label read off a card ("direct") is kept as-is. */
+const PHONE_LABELS = ['mobile', 'work', 'home', 'main', 'work fax', 'other'];
+const EMAIL_LABELS = ['work', 'home', 'other'];
+
 /**
  * The photo's own width/height, so the preview box can take the shape of the card instead of
- * cropping it to fit a fixed one.
- *
- * A scanned card is perspective-corrected to whatever rectangle was detected, so its proportions
- * aren't known ahead of time — and a landscape card in a letterbox-shaped box loses its top and
- * bottom edges, which is where company names and job titles usually sit. `Image.getSize` reads
- * the header only, so this costs nothing next to rendering the image itself.
+ * cropping it to fit a fixed one. `Image.getSize` reads the header only.
  */
 function useImageAspect(uri?: string): number {
   const [aspect, setAspect] = useState(CARD_ASPECT);
-
   useEffect(() => {
     if (!uri) return;
     let cancelled = false;
@@ -53,39 +44,63 @@ function useImageAspect(uri?: string): number {
       (width, height) => {
         if (!cancelled && height > 0) setAspect(width / height);
       },
-      // Leaving the fallback in place is enough: the image is drawn with resizeMode="contain",
-      // so a wrong box shape letterboxes rather than crops.
       () => {}
     );
     return () => {
       cancelled = true;
     };
   }, [uri]);
-
   return aspect;
 }
 
 export type CardFormFields = Omit<
   CardDraft,
-  'imageUrl' | 'imageBackUrl' | 'thumbUrl' | 'source' | 'rawOcrText'
+  | 'imageUrl'
+  | 'imageBackUrl'
+  | 'thumbUrl'
+  | 'source'
+  | 'rawOcrText'
+  | 'metPlace'
+  | 'metLocation'
+  | 'followUpAt'
 >;
+
+interface FooterAction {
+  label: string;
+  onPress: () => void;
+  destructive?: boolean;
+}
 
 interface Props {
   draft: CardDraft;
   imageUri?: string;
   backImageUri?: string;
+  /** The header button's label: "Save" for a new card, "Done" when editing one. */
   saveLabel: string;
   /**
-   * May throw SaveAborted to stop quietly. Image URLs are excluded deliberately: the form never sets them, and letting them through as
-   * `undefined` would make updateCard's deleteField() mapping wipe the card's photos on a plain
-   * text edit.
+   * Persists the fields. May throw SaveAborted to stop quietly. Image URLs are excluded
+   * deliberately: the form never sets them, and letting them through as `undefined` would make
+   * updateCard's deleteField() mapping wipe the card's photos on a plain text edit.
    */
   onSave: (fields: CardFormFields) => Promise<void>;
+  /**
+   * Called once the save has landed and the unsaved-changes guard is off. Navigation belongs
+   * here, not in onSave: leaving from inside onSave would be caught by the guard and shown as
+   * "Discard changes?" for changes that were in fact just saved.
+   */
+  onSaved: () => void;
+  /**
+   * A new card is unsaved by definition, so leaving it always asks. An existing card only asks
+   * when something was changed.
+   */
+  isNew?: boolean;
+  /** Lifts the unsaved-changes guard, for a parent leaving on purpose (e.g. the scan was queued). */
+  allowLeave?: boolean;
+  /** Presented as a sheet: show Cancel on the left, as every iOS edit sheet does. */
+  showCancel?: boolean;
   /** When provided, shows Retake/Add Photo controls for an already-saved card. */
   onRetakePhoto?: (side: 'front' | 'back', localUri: string) => Promise<void>;
-  extraAction?: { label: string; onPress: () => void; destructive?: boolean };
-  /** A second, quieter action above the primary one (e.g. Share). */
-  secondaryAction?: { label: string; onPress: () => void };
+  footerActions?: FooterAction[];
   /**
    * The details are still being read off the photo. Shows the card with a banner, and holds the
    * fields and Save until the draft arrives — the parent then remounts the form with it, which
@@ -96,39 +111,175 @@ interface Props {
   header?: React.ReactNode;
 }
 
+interface FormState {
+  firstName: string;
+  lastName: string;
+  jobTitle: string;
+  company: string;
+  phones: CardPhone[];
+  emails: CardEmail[];
+  website: string;
+  address: string;
+  event: string;
+  tags: string;
+  notes: string;
+}
+
+function initialState(draft: CardDraft): FormState {
+  return {
+    firstName: draft.firstName,
+    lastName: draft.lastName,
+    jobTitle: draft.jobTitle ?? '',
+    company: draft.company ?? '',
+    phones: draft.phones.map((p) => ({ ...p })),
+    emails: draft.emails.map((e) => ({ ...e })),
+    website: draft.website ?? '',
+    address: draft.address ?? '',
+    event: draft.event ?? '',
+    tags: draft.tags.join(', '),
+    notes: draft.notes ?? '',
+  };
+}
+
+function toFields(s: FormState): CardFormFields {
+  return {
+    firstName: s.firstName.trim(),
+    lastName: s.lastName.trim(),
+    jobTitle: s.jobTitle.trim() || undefined,
+    company: s.company.trim() || undefined,
+    phones: s.phones
+      .map((p) => ({ label: p.label || 'work', number: p.number.trim() }))
+      .filter((p) => p.number),
+    emails: s.emails
+      .map((e) => ({ label: e.label || 'work', address: e.address.trim() }))
+      .filter((e) => e.address),
+    website: s.website.trim() || undefined,
+    address: s.address.trim() || undefined,
+    event: s.event.trim() || undefined,
+    notes: s.notes.trim() || undefined,
+    tags: s.tags
+      .split(',')
+      .map((t) => t.trim())
+      .filter(Boolean),
+  };
+}
+
+function pickLabel(options: string[], current: string): Promise<string | undefined> {
+  const all = options.includes(current) || !current ? options : [current, ...options];
+  return new Promise((resolve) => {
+    ActionSheetIOS.showActionSheetWithOptions(
+      { title: 'Label', options: [...all, 'Cancel'], cancelButtonIndex: all.length },
+      (i) => resolve(i < all.length ? all[i] : undefined)
+    );
+  });
+}
+
 export default function CardForm({
   draft,
   imageUri,
   backImageUri,
   saveLabel,
   onSave,
+  onSaved,
+  isNew = false,
+  allowLeave = false,
+  showCancel = false,
   onRetakePhoto,
-  extraAction,
-  secondaryAction,
+  footerActions,
   reading = false,
   header,
 }: Props) {
-  const [firstName, setFirstName] = useState(draft.firstName);
-  const [lastName, setLastName] = useState(draft.lastName);
-  const [jobTitle, setJobTitle] = useState(draft.jobTitle ?? '');
-  const [company, setCompany] = useState(draft.company ?? '');
-  const [phonesText, setPhonesText] = useState(joinPhones(draft.phones));
-  const [emailsText, setEmailsText] = useState(joinEmails(draft.emails));
-  const [website, setWebsite] = useState(draft.website ?? '');
-  const [address, setAddress] = useState(draft.address ?? '');
-  const [notes, setNotes] = useState(draft.notes ?? '');
-  const [tagsText, setTagsText] = useState(draft.tags.join(', '));
+  const navigation = useNavigation<NativeStackNavigationProp<Record<string, object | undefined>>>();
+  const initial = useMemo(() => initialState(draft), [draft]);
+  const [form, setForm] = useState<FormState>(initial);
   const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
   const [viewerIndex, setViewerIndex] = useState<number | null>(null);
   const [retakingSide, setRetakingSide] = useState<'front' | 'back' | null>(null);
   const { scan, reviewModal } = useScanWithReview();
   const frontAspect = useImageAspect(imageUri);
   const backAspect = useImageAspect(backImageUri);
 
-  const viewerImages = [
-    imageUri && { uri: imageUri, label: 'Front' },
-    backImageUri && { uri: backImageUri, label: 'Back' },
-  ].filter((img): img is { uri: string; label: string } => Boolean(img));
+  const dirty = useMemo(
+    () => JSON.stringify(toFields(form)) !== JSON.stringify(toFields(initial)),
+    [form, initial]
+  );
+  const hasName = Boolean(form.firstName.trim() || form.lastName.trim());
+  const canSave = !reading && !saving && hasName && (isNew || dirty);
+
+  // Unsaved work must never vanish on a back swipe. A new card is unsaved by definition.
+  usePreventRemove(!saved && !allowLeave && (isNew || dirty), ({ data }) => {
+    ActionSheetIOS.showActionSheetWithOptions(
+      {
+        title: isNew ? 'Discard this card?' : 'Discard your changes?',
+        message: isNew ? 'It has not been saved.' : undefined,
+        options: [isNew ? 'Discard Card' : 'Discard Changes', 'Keep Editing'],
+        destructiveButtonIndex: 0,
+        cancelButtonIndex: 1,
+      },
+      (i) => {
+        if (i === 0) navigation.dispatch(data.action);
+      }
+    );
+  });
+
+  useEffect(() => {
+    if (saved) onSaved();
+    // Fires once, after the guard has re-rendered off.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [saved]);
+
+  const set = <K extends keyof FormState>(key: K, value: FormState[K]) =>
+    setForm((f) => ({ ...f, [key]: value }));
+
+  const handleSave = async () => {
+    if (!canSave) {
+      if (!hasName) Alert.alert('Name Required', 'Enter at least a first or last name.');
+      return;
+    }
+    setSaving(true);
+    try {
+      await onSave(toFields(form));
+      haptics.success();
+      setSaved(true);
+    } catch (e) {
+      // The user backed out of a prompt (e.g. the duplicate warning). Nothing failed.
+      if (e instanceof SaveAborted) return;
+      console.error('Card save failed:', e);
+      haptics.error();
+      Alert.alert('Couldn’t Save', 'Check your connection and try again.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // Save lives in the navigation bar, where every iOS edit sheet puts it.
+  useLayoutEffect(() => {
+    navigation.setOptions({
+      unstable_headerRightItems: () => [
+        saving
+          ? {
+              type: 'custom',
+              element: <ActivityIndicator />,
+              hidesSharedBackground: true,
+            }
+          : {
+              type: 'button',
+              label: saveLabel,
+              variant: 'done',
+              // Disabled until there is a name and (for an existing card) a change, as Contacts
+              // does — a Save that does nothing gives no feedback at all.
+              disabled: !canSave,
+              onPress: handleSave,
+            },
+      ],
+      unstable_headerLeftItems: showCancel
+        ? () => [{ type: 'button', label: 'Cancel', onPress: () => navigation.goBack() }]
+        : undefined,
+    });
+    // handleSave closes over the form, so the button is rebuilt whenever the form changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [navigation, form, saving, canSave, saveLabel, showCancel]);
 
   const handleRetake = async (side: 'front' | 'back') => {
     if (!onRetakePhoto || retakingSide) return;
@@ -140,51 +291,84 @@ export default function CardForm({
         return;
       }
       await onRetakePhoto(side, result.uri);
+      haptics.success();
     } catch (e) {
       console.error('Retake failed:', e);
-      Alert.alert('Retake failed', 'Check your connection and try again.');
+      Alert.alert('Couldn’t Replace Photo', 'Check your connection and try again.');
     } finally {
       setRetakingSide(null);
     }
   };
 
-  const handleSave = async () => {
-    if (!firstName.trim() && !lastName.trim()) {
-      Alert.alert('Missing name', 'Enter at least a first or last name.');
-      return;
-    }
-    setSaving(true);
-    try {
-      await onSave({
-        firstName: firstName.trim(),
-        lastName: lastName.trim(),
-        jobTitle: jobTitle.trim() || undefined,
-        company: company.trim() || undefined,
-        phones: relabelPhones(splitToList(phonesText), draft.phones),
-        emails: relabelEmails(splitToList(emailsText), draft.emails),
-        website: website.trim() || undefined,
-        address: address.trim() || undefined,
-        notes: notes.trim() || undefined,
-        tags: splitToList(tagsText),
-      });
-    } catch (e) {
-      // The user backed out of a prompt (e.g. the duplicate warning). Nothing failed, so say
-      // nothing; `finally` clears the spinner.
-      if (e instanceof SaveAborted) return;
-      console.error('Card save failed:', e);
-      Alert.alert('Save failed', 'Check your connection and try again.');
-    } finally {
-      setSaving(false);
-    }
+  const viewerImages = [
+    imageUri && { uri: imageUri, label: 'Front' },
+    backImageUri && { uri: backImageUri, label: 'Back' },
+  ].filter((img): img is { uri: string; label: string } => Boolean(img));
+
+  // Return-key chaining: Next moves through the single-line fields in order.
+  const refs = useRef<(TextInput | null)[]>([]);
+  let order = 0;
+  const chain = () => {
+    const index = order++;
+    return {
+      ref: (r: TextInput | null) => {
+        refs.current[index] = r;
+      },
+      onSubmitEditing: () => refs.current[index + 1]?.focus(),
+      submitBehavior: 'submit' as const,
+      returnKeyType: 'next' as const,
+    };
+  };
+
+  const editable = !reading;
+
+  const photo = (side: 'front' | 'back') => {
+    const uri = side === 'front' ? imageUri : backImageUri;
+    if (!uri && !onRetakePhoto) return null;
+    const aspect = side === 'front' ? frontAspect : backAspect;
+    const label = side === 'front' ? 'Front' : 'Back';
+    return (
+      <View style={styles.imageBlock}>
+        <View style={styles.imageHeader}>
+          <Text style={styles.sectionHeader}>{label}</Text>
+          {onRetakePhoto && (
+            <Button
+              onPress={() => handleRetake(side)}
+              disabled={retakingSide !== null}
+              accessibilityLabel={uri ? `Retake ${side} photo` : `Add ${side} photo`}
+            >
+              {retakingSide === side ? (
+                <ActivityIndicator size="small" />
+              ) : (
+                <Text style={styles.link}>{uri ? 'Retake' : 'Add Photo'}</Text>
+              )}
+            </Button>
+          )}
+        </View>
+        {uri ? (
+          <Button
+            onPress={() => setViewerIndex(side === 'back' && imageUri ? 1 : 0)}
+            hitSlop={undefined}
+            accessibilityRole="imagebutton"
+            accessibilityLabel={`${label} of card`}
+            accessibilityHint="Opens the photo full screen"
+          >
+            <Image source={{ uri }} style={[styles.preview, { aspectRatio: aspect }]} resizeMode="contain" />
+          </Button>
+        ) : (
+          <View style={[styles.preview, styles.previewEmpty]}>
+            <Text style={styles.footnote}>No {side} photo yet</Text>
+          </View>
+        )}
+      </View>
+    );
   };
 
   return (
     <ScrollView
+      style={styles.screen}
       contentContainerStyle={styles.container}
-      // Without these three the bottom of the form is unreachable: iOS puts the keyboard over
-      // Notes and Save with no inset to scroll past, and the default keyboardShouldPersistTaps
-      // ("never") makes the first tap on Save only dismiss the keyboard, so the button reads as
-      // unresponsive.
+      contentInsetAdjustmentBehavior="automatic"
       keyboardShouldPersistTaps="handled"
       keyboardDismissMode="interactive"
       automaticallyAdjustKeyboardInsets
@@ -192,87 +376,14 @@ export default function CardForm({
       {header}
 
       {reading && (
-        <View style={styles.readingBanner} accessibilityRole="progressbar">
+        <View style={styles.readingBanner} accessibilityRole="progressbar" accessibilityLiveRegion="polite">
           <ActivityIndicator size="small" />
-          <Text style={styles.readingText}>Reading card… this can take up to a minute</Text>
+          <Text style={styles.readingText}>Reading card… this can take up to a minute.</Text>
         </View>
       )}
 
-      {(imageUri || onRetakePhoto) && (
-        <View style={styles.imageBlock}>
-          <View style={styles.imageHeader}>
-            <Text style={styles.label}>Front</Text>
-            {onRetakePhoto && (
-              <Button
-                onPress={() => handleRetake('front')}
-                disabled={retakingSide !== null}
-                accessibilityLabel={imageUri ? 'Retake front photo' : 'Add front photo'}
-              >
-                {retakingSide === 'front' ? (
-                  <ActivityIndicator size="small" />
-                ) : (
-                  <Text style={styles.retakeText}>{imageUri ? 'Retake' : 'Add Photo'}</Text>
-                )}
-              </Button>
-            )}
-          </View>
-          {imageUri ? (
-            <Button
-              onPress={() => setViewerIndex(0)}
-              hitSlop={undefined}
-              accessibilityLabel="View front photo full screen"
-            >
-              <Image
-                source={{ uri: imageUri }}
-                style={[styles.preview, { aspectRatio: frontAspect }]}
-                resizeMode="contain"
-              />
-            </Button>
-          ) : (
-            <View style={[styles.preview, styles.previewEmpty]}>
-              <Text style={styles.previewEmptyText}>No front photo yet</Text>
-            </View>
-          )}
-        </View>
-      )}
-
-      {(backImageUri || onRetakePhoto) && (
-        <View style={styles.imageBlock}>
-          <View style={styles.imageHeader}>
-            <Text style={styles.label}>Back</Text>
-            {onRetakePhoto && (
-              <Button
-                onPress={() => handleRetake('back')}
-                disabled={retakingSide !== null}
-                accessibilityLabel={backImageUri ? 'Retake back photo' : 'Add back photo'}
-              >
-                {retakingSide === 'back' ? (
-                  <ActivityIndicator size="small" />
-                ) : (
-                  <Text style={styles.retakeText}>{backImageUri ? 'Retake' : 'Add Photo'}</Text>
-                )}
-              </Button>
-            )}
-          </View>
-          {backImageUri ? (
-            <Button
-              onPress={() => setViewerIndex(imageUri ? 1 : 0)}
-              hitSlop={undefined}
-              accessibilityLabel="View back photo full screen"
-            >
-              <Image
-                source={{ uri: backImageUri }}
-                style={[styles.preview, { aspectRatio: backAspect }]}
-                resizeMode="contain"
-              />
-            </Button>
-          ) : (
-            <View style={[styles.preview, styles.previewEmpty]}>
-              <Text style={styles.previewEmptyText}>No back photo yet</Text>
-            </View>
-          )}
-        </View>
-      )}
+      {photo('front')}
+      {photo('back')}
 
       <ImageViewerModal
         visible={viewerIndex !== null}
@@ -282,137 +393,240 @@ export default function CardForm({
       />
       {reviewModal}
 
-      <Field editable={!reading} label="First name" value={firstName} onChangeText={setFirstName} />
-      <Field editable={!reading} label="Last name" value={lastName} onChangeText={setLastName} />
-      <Field editable={!reading} label="Job title" value={jobTitle} onChangeText={setJobTitle} />
-      <Field editable={!reading} label="Company" value={company} onChangeText={setCompany} />
-      <Field editable={!reading}
-        label="Phone(s)"
-        value={phonesText}
-        onChangeText={setPhonesText}
-        placeholder="comma separated"
-        keyboardType="phone-pad"
-      />
-      <Field editable={!reading}
-        label="Email(s)"
-        value={emailsText}
-        onChangeText={setEmailsText}
-        placeholder="comma separated"
-        keyboardType="email-address"
-        autoCapitalize="none"
-        autoCorrect={false}
-      />
-      <Field editable={!reading}
-        label="Website"
-        value={website}
-        onChangeText={setWebsite}
-        keyboardType="url"
-        autoCapitalize="none"
-        autoCorrect={false}
-      />
-      <Field editable={!reading} label="Address" value={address} onChangeText={setAddress} />
-      <Field editable={!reading} label="Tags" value={tagsText} onChangeText={setTagsText} placeholder="comma separated" />
-      <Field editable={!reading} label="Notes" value={notes} onChangeText={setNotes} multiline />
+      <Section>
+        <Row label="First" first>
+          <Input {...chain()} editable={editable} value={form.firstName} onChangeText={(v) => set('firstName', v)} placeholder="First name" autoCapitalize="words" />
+        </Row>
+        <Row label="Last">
+          <Input {...chain()} editable={editable} value={form.lastName} onChangeText={(v) => set('lastName', v)} placeholder="Last name" autoCapitalize="words" />
+        </Row>
+        <Row label="Title">
+          <Input {...chain()} editable={editable} value={form.jobTitle} onChangeText={(v) => set('jobTitle', v)} placeholder="Job title" autoCapitalize="words" />
+        </Row>
+        <Row label="Company">
+          <Input {...chain()} editable={editable} value={form.company} onChangeText={(v) => set('company', v)} placeholder="Company" autoCapitalize="words" />
+        </Row>
+      </Section>
 
-      <Button
-        style={[styles.saveButton, reading && styles.saveButtonDisabled]}
-        onPress={handleSave}
-        disabled={saving || reading}
-        accessibilityLabel={saveLabel}
-        accessibilityState={{ busy: saving }}
-      >
-        {saving ? <ActivityIndicator color="#fff" /> : <Text style={styles.saveButtonText}>{saveLabel}</Text>}
-      </Button>
+      <MultiSection
+        items={form.phones}
+        editable={editable}
+        addLabel="add phone"
+        labels={PHONE_LABELS}
+        valueOf={(p) => p.number}
+        make={(label, value) => ({ label, number: value })}
+        onChange={(phones) => set('phones', phones)}
+        inputProps={{ keyboardType: 'phone-pad', placeholder: 'Phone' }}
+      />
 
-      {secondaryAction && (
-        <Button style={styles.extraButton} onPress={secondaryAction.onPress}>
-          <Text style={styles.retakeText}>{secondaryAction.label}</Text>
-        </Button>
-      )}
+      <MultiSection
+        items={form.emails}
+        editable={editable}
+        addLabel="add email"
+        labels={EMAIL_LABELS}
+        valueOf={(e) => e.address}
+        make={(label, value) => ({ label, address: value })}
+        onChange={(emails) => set('emails', emails)}
+        inputProps={{ keyboardType: 'email-address', autoCapitalize: 'none', autoCorrect: false, placeholder: 'Email' }}
+      />
 
-      {extraAction && (
-        <Button style={styles.extraButton} onPress={extraAction.onPress}>
-          <Text style={[styles.extraButtonText, extraAction.destructive && styles.destructiveText]}>
-            {extraAction.label}
-          </Text>
-        </Button>
-      )}
+      <Section>
+        <Row label="Website" first>
+          <Input {...chain()} editable={editable} value={form.website} onChangeText={(v) => set('website', v)} placeholder="Website" keyboardType="url" autoCapitalize="none" autoCorrect={false} />
+        </Row>
+        <Row label="Address">
+          <Input editable={editable} value={form.address} onChangeText={(v) => set('address', v)} placeholder="Address" multiline />
+        </Row>
+      </Section>
+
+      <Section>
+        <Row label="Met at" first>
+          <Input {...chain()} editable={editable} value={form.event} onChangeText={(v) => set('event', v)} placeholder="Event or occasion" autoCapitalize="sentences" />
+        </Row>
+        <Row label="Tags">
+          <Input {...chain()} editable={editable} value={form.tags} onChangeText={(v) => set('tags', v)} placeholder="Comma separated" autoCapitalize="none" />
+        </Row>
+        <Row label="Notes">
+          <Input editable={editable} value={form.notes} onChangeText={(v) => set('notes', v)} placeholder="Notes" multiline />
+        </Row>
+      </Section>
+
+      {footerActions?.map((action) => (
+        <Section key={action.label}>
+          <Button
+            style={styles.actionRow}
+            pressedStyle={styles.rowPressed}
+            hitSlop={undefined}
+            onPress={action.onPress}
+          >
+            <Text style={[styles.actionText, action.destructive && styles.destructive]}>{action.label}</Text>
+          </Button>
+        </Section>
+      ))}
     </ScrollView>
   );
 }
 
-function Field(props: {
-  label: string;
-  value: string;
-  onChangeText: (v: string) => void;
-  placeholder?: string;
-  multiline?: boolean;
-  keyboardType?: 'default' | 'email-address' | 'phone-pad' | 'url';
-  autoCapitalize?: 'none' | 'sentences' | 'words';
-  autoCorrect?: boolean;
-  editable: boolean;
-}) {
+function Section({ children }: { children: React.ReactNode }) {
+  return <View style={styles.section}>{children}</View>;
+}
+
+function Row({ label, first, children }: { label: string; first?: boolean; children: React.ReactNode }) {
   return (
-    <View style={styles.field}>
-      <Text style={styles.label}>{props.label}</Text>
-      <TextInput
-        style={[styles.input, props.multiline && styles.multiline]}
-        value={props.value}
-        onChangeText={props.onChangeText}
-        placeholder={props.placeholder}
-        multiline={props.multiline}
-        editable={props.editable}
-        keyboardType={props.keyboardType}
-        autoCapitalize={props.autoCapitalize}
-        autoCorrect={props.autoCorrect}
-        // Deliberately no textContentType on these: they hold *someone else's* details, and iOS
-        // would offer to autofill the signed-in user's own name, company, and address.
-        textContentType="none"
-        returnKeyType={props.multiline ? 'default' : 'done'}
-      />
+    <View style={[styles.row, !first && styles.rowSeparator]}>
+      <Text style={styles.rowLabel} accessibilityElementsHidden importantForAccessibility="no">
+        {label}
+      </Text>
+      <View style={styles.rowValue}>{children}</View>
+    </View>
+  );
+}
+
+const Input = React.forwardRef<TextInput, React.ComponentProps<typeof TextInput>>(function Input(props, ref) {
+  return (
+    <TextInput
+      ref={ref}
+      placeholderTextColor={colors.placeholder}
+      // Deliberately no textContentType: these hold *someone else's* details, and iOS would
+      // offer to autofill the signed-in user's own name, company, and address.
+      textContentType="none"
+      accessibilityLabel={props.placeholder}
+      {...props}
+      style={[styles.input, props.multiline && styles.multiline, props.style]}
+    />
+  );
+});
+
+/**
+ * Contacts-style rows for a repeated value: a label button, the value, a delete control, and an
+ * "add" row. Replaces the old comma-separated field, which the phone keypad could not even type a
+ * comma into.
+ */
+function MultiSection<T extends { label: string }>(props: {
+  items: T[];
+  editable: boolean;
+  addLabel: string;
+  labels: string[];
+  valueOf: (item: T) => string;
+  make: (label: string, value: string) => T;
+  onChange: (items: T[]) => void;
+  inputProps: React.ComponentProps<typeof TextInput>;
+}) {
+  const { items, editable, labels, valueOf, make, onChange } = props;
+  const [focusIndex, setFocusIndex] = useState<number | null>(null);
+  const inputs = useRef<(TextInput | null)[]>([]);
+
+  useEffect(() => {
+    if (focusIndex !== null) {
+      inputs.current[focusIndex]?.focus();
+      setFocusIndex(null);
+    }
+  }, [focusIndex]);
+
+  const update = (i: number, next: T) => onChange(items.map((item, j) => (j === i ? next : item)));
+
+  return (
+    <View style={styles.section}>
+      {items.map((item, i) => (
+        <View key={i} style={[styles.row, i > 0 && styles.rowSeparator]}>
+          <Button
+            disabled={!editable}
+            onPress={() => onChange(items.filter((_, j) => j !== i))}
+            accessibilityLabel={`Delete ${item.label} ${valueOf(item)}`}
+          >
+            <SymbolView name="minus.circle.fill" size={22} tintColor={colors.destructive} />
+          </Button>
+          <Button
+            style={styles.labelButton}
+            disabled={!editable}
+            onPress={async () => {
+              const label = await pickLabel(labels, item.label);
+              if (label) update(i, make(label, valueOf(item)));
+            }}
+            accessibilityLabel={`Label: ${item.label}`}
+            accessibilityHint="Changes the label"
+          >
+            <Text style={styles.labelButtonText} numberOfLines={1}>
+              {item.label || 'other'}
+            </Text>
+            <SymbolView name="chevron.right" size={11} tintColor={colors.tertiaryLabel} />
+          </Button>
+          <View style={styles.rowValue}>
+            <Input
+              ref={(r) => {
+                inputs.current[i] = r;
+              }}
+              {...props.inputProps}
+              editable={editable}
+              value={valueOf(item)}
+              onChangeText={(v) => update(i, make(item.label, v))}
+              returnKeyType="done"
+            />
+          </View>
+        </View>
+      ))}
+      <Button
+        style={[styles.row, items.length > 0 && styles.rowSeparator]}
+        pressedStyle={styles.rowPressed}
+        hitSlop={undefined}
+        disabled={!editable}
+        onPress={() => {
+          onChange([...items, make(labels[0], '')]);
+          setFocusIndex(items.length);
+        }}
+      >
+        <SymbolView name="plus.circle.fill" size={22} tintColor={colors.success} />
+        <Text style={styles.addText}>{props.addLabel}</Text>
+      </Button>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { padding: 20, gap: 4, paddingBottom: 48 },
+  screen: { backgroundColor: colors.groupedBackground },
+  container: { padding: 16, gap: 20, paddingBottom: 48 },
   readingBanner: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
     padding: 12,
-    marginBottom: 12,
     borderRadius: 10,
-    backgroundColor: '#eef5ff',
+    backgroundColor: colors.cell,
   },
-  readingText: { color: '#345', fontSize: 14, flexShrink: 1 },
-  imageBlock: { marginBottom: 16 },
+  readingText: { ...type.subheadline, color: colors.secondaryLabel, flexShrink: 1 },
+  imageBlock: { gap: 6 },
   imageHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 4,
+    paddingHorizontal: 16,
   },
-  // Height comes from the photo's own aspect ratio rather than a fixed value, capped so a card
-  // shot in portrait can't push the form fields off the screen.
-  preview: { width: '100%', maxHeight: 280, borderRadius: 10, backgroundColor: '#eee' },
-  previewEmpty: { height: 180, alignItems: 'center', justifyContent: 'center' },
-  previewEmptyText: { color: '#999', fontSize: 14 },
-  retakeText: { color: '#0a7cff', fontWeight: '600', fontSize: 14 },
-  field: { marginBottom: 14 },
-  label: { fontSize: 13, color: '#666' },
-  input: { borderWidth: 1, borderColor: '#ccc', borderRadius: 8, padding: 10, fontSize: 16 },
-  multiline: { minHeight: 80, textAlignVertical: 'top' },
-  saveButton: {
-    backgroundColor: '#111',
-    borderRadius: 10,
-    padding: 16,
+  sectionHeader: { ...type.footnote, color: colors.secondaryLabel, textTransform: 'uppercase' },
+  link: { ...type.subheadline, color: colors.tint },
+  // Height comes from the photo's own aspect ratio, capped so a portrait shot can't push the
+  // form off the screen.
+  preview: { width: '100%', maxHeight: 280, borderRadius: 10, backgroundColor: colors.tertiaryFill },
+  previewEmpty: { height: 160, alignItems: 'center', justifyContent: 'center' },
+  footnote: { ...type.footnote, color: colors.secondaryLabel },
+  section: { backgroundColor: colors.cell, borderRadius: 10, overflow: 'hidden' },
+  row: {
+    flexDirection: 'row',
     alignItems: 'center',
-    marginTop: 12,
+    minHeight: 44,
+    paddingLeft: 16,
+    paddingRight: 12,
+    gap: 10,
   },
-  saveButtonDisabled: { opacity: 0.4 },
-  saveButtonText: { color: '#fff', fontWeight: '700', fontSize: 16 },
-  extraButton: { alignItems: 'center', marginTop: 16 },
-  extraButtonText: { fontSize: 15, color: '#666' },
-  destructiveText: { color: '#c00' },
+  rowSeparator: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.separator },
+  rowPressed: { backgroundColor: colors.fill },
+  rowLabel: { ...type.body, color: colors.label, width: 82 },
+  rowValue: { flex: 1 },
+  input: { ...type.body, color: colors.label, paddingVertical: 11 },
+  multiline: { minHeight: 66, textAlignVertical: 'top', paddingTop: 11 },
+  labelButton: { flexDirection: 'row', alignItems: 'center', gap: 4, width: 86 },
+  labelButtonText: { ...type.subheadline, color: colors.tint, flexShrink: 1 },
+  addText: { ...type.body, color: colors.label },
+  actionRow: { minHeight: 44, alignItems: 'center', justifyContent: 'center' },
+  actionText: { ...type.body, color: colors.tint },
+  destructive: { color: colors.destructive },
 });

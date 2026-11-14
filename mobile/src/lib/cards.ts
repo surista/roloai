@@ -43,11 +43,22 @@ async function deleteImageByUrl(url: string): Promise<void> {
   }
 }
 
-export function subscribeToCards(onChange: (cards: Card[]) => void): () => void {
+/**
+ * `onError` is not optional: without it a refused or failed listener is silent, and every screen
+ * waiting on the first snapshot (My Card's spinner, the list's empty state) waits forever.
+ */
+export function subscribeToCards(
+  onChange: (cards: Card[]) => void,
+  onError: (error: Error) => void
+): () => void {
   const q = query(cardsCollection, orderBy('createdAt', 'desc'));
-  return onSnapshot(q, (snapshot) => {
-    onChange(snapshot.docs.map((d) => cardFromFirestore(d.id, d.data())));
-  });
+  return onSnapshot(
+    q,
+    (snapshot) => {
+      onChange(snapshot.docs.map((d) => cardFromFirestore(d.id, d.data())));
+    },
+    onError
+  );
 }
 
 /** One-off read of the whole library, for checks that need every card at a single moment. */
@@ -212,6 +223,10 @@ export async function updateCardImage(
  * A retake already cleans up the file it replaced, so the URLs still on the card — see
  * `cardImageUrls` — are the only ones left to remove.
  *
+ * The document goes first. Deleting the photos first meant a failed (or offline, so never
+ * acknowledged) document delete left the card in the library pointing at files that no longer
+ * existed. This way round the worst case is an orphaned file in the bucket, which nobody sees.
+ *
  * Pass `pairedWith` when the card has a partner so the partner is released too; the pairing
  * reader ignores a one-sided link, but leaving it would strand a stale id on the survivor.
  */
@@ -220,10 +235,10 @@ export async function deleteCard(
   imageUrls: (string | undefined)[] = [],
   pairedWith?: string
 ): Promise<void> {
+  await deleteDoc(doc(db, 'cards', id));
   await Promise.all(
     imageUrls.filter((url): url is string => Boolean(url)).map(deleteImageByUrl)
   );
-  await deleteDoc(doc(db, 'cards', id));
   if (pairedWith) await clearLinkIfPointsAt(pairedWith, id);
 }
 

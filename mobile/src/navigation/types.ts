@@ -7,8 +7,9 @@ export type RootStackParamList = {
   Settings: undefined;
   MyCard: undefined;
   /**
-   * Either a finished `draft` (a QR code, which needs no reading), or `scan` — the accepted
-   * photos, which the screen reads itself so the card can be on screen while Claude works.
+   * Either a finished `draft` (a QR code, or a queued scan already read in the background), or
+   * `scan` — the accepted photos, which the screen reads itself so the card can be on screen while
+   * Claude works.
    */
   ReviewEdit: {
     draft?: CardDraft;
@@ -21,4 +22,6 @@ export type RootStackParamList = {
     mine?: boolean;
   };
   CardDetail: { cardId: string };
+  /** The edit sheet for a saved card (Contacts' Edit). */
+  EditCard: { cardId: string };
 };

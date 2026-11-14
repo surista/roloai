@@ -1,6 +1,13 @@
 {
-  "platforms": ["apple"],
+  "platforms": [
+    "apple"
+  ],
   "apple": {
-    "modules": ["CardScannerModule"]
+    "modules": [
+      "CardScannerModule"
+    ],
+    "appDelegateSubscribers": [
+      "CardScannerAppDelegateSubscriber"
+    ]
   }
 }

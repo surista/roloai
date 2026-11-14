@@ -8,8 +8,13 @@ interface CardsValue {
   /** The library as shown in lists: everything except the owner's own card. */
   cards: Card[];
   myCard: Card | undefined;
-  /** False until the first snapshot arrives, so "no cards" can be told from "not loaded yet". */
+  /**
+   * False until the first snapshot (or a listener failure) arrives, so "no cards" can be told
+   * from "not loaded yet". A failure also sets it, or every screen waiting on it spins forever.
+   */
   loaded: boolean;
+  /** Set when the live listener failed; screens show it instead of an empty library. */
+  error: Error | null;
 }
 
 const CardsContext = createContext<CardsValue | undefined>(undefined);
@@ -25,19 +30,28 @@ const CardsContext = createContext<CardsValue | undefined>(undefined);
 export function CardsProvider({ children }: { children: React.ReactNode }) {
   const [all, setAll] = useState<Card[]>([]);
   const [loaded, setLoaded] = useState(false);
+  const [error, setError] = useState<Error | null>(null);
 
   useEffect(
     () =>
-      subscribeToCards((next) => {
-        setAll(next);
-        setLoaded(true);
-      }),
+      subscribeToCards(
+        (next) => {
+          setAll(next);
+          setError(null);
+          setLoaded(true);
+        },
+        (e) => {
+          console.error('Card listener failed:', e);
+          setError(e);
+          setLoaded(true);
+        }
+      ),
     []
   );
 
   const value = useMemo(
-    () => ({ all, cards: withoutMine(all), myCard: myCardOf(all), loaded }),
-    [all, loaded]
+    () => ({ all, cards: withoutMine(all), myCard: myCardOf(all), loaded, error }),
+    [all, loaded, error]
   );
   return <CardsContext.Provider value={value}>{children}</CardsContext.Provider>;
 }

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Alert } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { myCardOf, type CardDraft } from '@roloai/shared';
@@ -9,6 +9,9 @@ import { confirmNoDuplicate } from '../lib/duplicateCheck';
 import { CardExtractionError } from '../lib/functions';
 import { forgetPhotos, readCard } from '../lib/scanReader';
 import { addQueuedScan, removeQueuedScan } from '../lib/scanQueue';
+import { captureMetPlace, type MetPlace } from '../lib/location';
+import { haptics } from '../lib/haptics';
+import { kickQueueReader } from '../lib/queueReader';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'ReviewEdit'>;
 
@@ -37,6 +40,19 @@ export default function ReviewEditScreen({ route, navigation }: Props) {
     back: localBackImageUri ?? scan?.backUri,
   });
   const [attempt, setAttempt] = useState(0);
+  const leaveTo = useRef<() => void>(() => navigation.popToTop());
+  // Set when leaving without saving is fine (the scan was queued or deliberately discarded); the
+  // form's unsaved-card guard is lifted first, then the navigation runs.
+  const [leaving, setLeaving] = useState<(() => void) | null>(null);
+  useEffect(() => {
+    leaving?.();
+  }, [leaving]);
+
+  // Where the card was received, looked up while it is being read so it is ready by Save. Only a
+  // live scan has a "here": a queued scan was taken somewhere else, earlier.
+  const place = useRef<Promise<MetPlace>>(
+    !queuedId && !mine ? captureMetPlace() : Promise.resolve({})
+  );
 
   // The scan reader caches each photo's read so the Scan screen can start it early. Once this
   // screen is gone nothing will ask for those reads again.
@@ -46,10 +62,12 @@ export default function ReviewEditScreen({ route, navigation }: Props) {
     if (!scan) return;
     try {
       await addQueuedScan(scan.frontUri, scan.backUri);
-      navigation.popToTop();
+      kickQueueReader();
+      // Leaving an unsaved card normally asks first; this one is safely queued.
+      setLeaving(() => () => navigation.popToTop());
     } catch (e) {
       console.error('Could not queue scan:', e);
-      Alert.alert('Could not save the scan', 'There may not be enough storage space.');
+      Alert.alert('Couldn’t Save Scan', 'There may not be enough storage space.');
     }
   };
 
@@ -62,27 +80,29 @@ export default function ReviewEditScreen({ route, navigation }: Props) {
         // Usually already under way (or finished) from when the front was accepted.
         const result = await readCard(scan.frontUri, scan.backUri);
         if (cancelled) return;
-        // The rendered copies rather than the originals: Save uploads whatever the form holds,
-        // and these are the size that should be stored, not the scanner's full-resolution crop.
+        // The rendered copies rather than the originals: these are the size that should be stored.
         setImages({ front: result.front.uri, back: result.back?.uri });
         setDraft(result.draft);
+        haptics.success();
       } catch (e) {
         if (cancelled) return;
         console.error('Card extraction failed:', e);
-        const buttons = [
-          { text: 'Enter manually', onPress: () => setDraft(BLANK_DRAFT) },
-          { text: 'Try again', onPress: () => setAttempt((n) => n + 1) },
+        haptics.error();
+        const buttons: { text: string; style?: 'cancel'; onPress: () => void }[] = [
+          { text: 'Try Again', onPress: () => setAttempt((n) => n + 1) },
+          { text: 'Enter Manually', onPress: () => setDraft(BLANK_DRAFT) },
         ];
         // Queueing helps when the network is the problem; a too-much-text failure would just
         // fail again later. A scan that is already queued stays queued if the user backs out.
         if (!(e instanceof CardExtractionError) && !queuedId && !mine) {
-          buttons.push({ text: 'Save for later', onPress: () => void saveForLater() });
+          buttons.push({ text: 'Read Later', onPress: () => void saveForLater() });
         }
         Alert.alert(
-          'Could not read the card',
+          'Couldn’t Read Card',
           e instanceof CardExtractionError
             ? e.message
-            : 'Check your connection and try again, or fill the details in yourself.',
+            : 'Check your connection and try again, or fill in the details yourself.' +
+                (!queuedId && !mine ? ' Read Later keeps the photos and reads them when you’re back online.' : ''),
           buttons
         );
       }
@@ -97,14 +117,14 @@ export default function ReviewEditScreen({ route, navigation }: Props) {
 
   const discardQueued = () => {
     if (!queuedId) return;
-    Alert.alert('Discard this scan?', 'The photos will be deleted.', [
+    Alert.alert('Discard This Scan?', 'The photos will be deleted.', [
       { text: 'Cancel', style: 'cancel' },
       {
         text: 'Discard',
         style: 'destructive',
         onPress: async () => {
           await removeQueuedScan(queuedId);
-          navigation.popToTop();
+          setLeaving(() => () => navigation.popToTop());
         },
       },
     ]);
@@ -116,26 +136,27 @@ export default function ReviewEditScreen({ route, navigation }: Props) {
       key={draft ? 'ready' : 'reading'}
       draft={draft ?? BLANK_DRAFT}
       reading={!draft}
+      isNew
+      allowLeave={leaving !== null}
       imageUri={images.front}
       backImageUri={images.back}
-      saveLabel={mine ? 'Save as My Card' : 'Save Card'}
-      extraAction={
-        queuedId ? { label: 'Discard scan', onPress: discardQueued, destructive: true } : undefined
-      }
+      saveLabel="Save"
+      footerActions={queuedId ? [{ label: 'Discard Scan', onPress: discardQueued, destructive: true }] : undefined}
       onSave={async (fields) => {
         if (mine) {
           // Your own card is not a duplicate of anyone, and replaces the one already set.
           const existing = myCardOf(await fetchAllCards());
           await saveScannedMyCard(existing, fields, draft?.rawOcrText, images.front, images.back);
-          navigation.navigate('MyCard');
+          leaveTo.current = () => navigation.navigate('MyCard');
           return;
         }
-        await confirmNoDuplicate(fields, (cardId) =>
-          navigation.navigate('CardDetail', { cardId })
-        );
-        await createCard(
+        // "View existing" leaves an unsaved card, so the form asks before discarding it.
+        await confirmNoDuplicate(fields, (cardId) => navigation.navigate('CardDetail', { cardId }));
+        const met = await place.current;
+        const id = await createCard(
           {
             ...fields,
+            ...met,
             imageUrl: '',
             source: draft?.source ?? 'scan',
             rawOcrText: draft?.rawOcrText,
@@ -146,8 +167,13 @@ export default function ReviewEditScreen({ route, navigation }: Props) {
         // Only now is the queued scan done with; removing it earlier would lose the photos if
         // the save failed.
         if (queuedId) await removeQueuedScan(queuedId);
-        navigation.popToTop();
+        // Land on the new card, as Contacts does after creating one.
+        leaveTo.current = () => {
+          navigation.popToTop();
+          navigation.navigate('CardDetail', { cardId: id });
+        };
       }}
+      onSaved={() => leaveTo.current()}
     />
   );
 }
