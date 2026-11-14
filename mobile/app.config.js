@@ -7,6 +7,19 @@ const BUILD_NUMBER = VERSION.split('.')
   .join('')
   .replace(/^0+/, '');
 
+const { withEntitlementsPlist } = require('expo/config-plugins');
+
+/**
+ * Follow-up reminders are local notifications, which need no push capability. expo-notifications
+ * adds the remote-push entitlement regardless, and the App Store provisioning profile does not
+ * include Push Notifications, so the archive fails to sign. Strip it.
+ */
+const withoutPushEntitlement = (config) =>
+  withEntitlementsPlist(config, (c) => {
+    delete c.modResults['aps-environment'];
+    return c;
+  });
+
 module.exports = {
   expo: {
     name: 'RoloAI',
@@ -31,11 +44,11 @@ module.exports = {
       favicon: './assets/favicon.png',
     },
     plugins: [
+      withoutPushEntitlement,
       // Scanning never records audio, so no microphone prompt or purpose string.
       ['expo-camera', { microphonePermission: false, recordAudioAndroid: false }],
       'expo-sharing',
       'expo-image',
-      'expo-notifications',
       [
         'expo-contacts',
         {
