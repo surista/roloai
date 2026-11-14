@@ -19,6 +19,9 @@ const HEADER = [
   'Address',
   'Tags',
   'Notes',
+  'Event',
+  'Met at',
+  'Follow up',
   'Added',
 ];
 
@@ -39,6 +42,9 @@ export function cardsToCsv(cards: Card[]): string {
       card.address ?? '',
       card.tags.join('; '),
       card.notes ?? '',
+      card.event ?? '',
+      card.metPlace ?? '',
+      card.followUpAt ? new Date(card.followUpAt).toISOString().slice(0, 10) : '',
       new Date(card.createdAt).toISOString().slice(0, 10),
     ].map(field)
   );

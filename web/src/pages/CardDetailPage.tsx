@@ -22,6 +22,7 @@ import {
 } from '../lib/cards';
 import CardForm from '../components/CardForm';
 import ShareMenu from '../components/ShareMenu';
+import ContactLinks from '../components/ContactLinks';
 
 const displayName = (card: Card): string => `${card.firstName} ${card.lastName}`.trim();
 
@@ -58,9 +59,15 @@ export default function CardDetailPage() {
 
   const handleDelete = async () => {
     if (!cardId) return;
-    if (!confirm(`Delete ${card.firstName} ${card.lastName}?`)) return;
-    await deleteCard(cardId, cardImageUrls(card), partner?.id);
+    if (!confirm(`Delete ${card.firstName} ${card.lastName}? Its photos are deleted too.`)) return;
+    // Leave first: the listener drops the card at once, and the delete reports its own failure.
     navigate('/');
+    try {
+      await deleteCard(cardId, cardImageUrls(card), partner?.id);
+    } catch (e) {
+      console.error('Delete failed:', e);
+      alert('Could not delete the card. Check your connection and try again.');
+    }
   };
 
   const run = async (action: () => Promise<void>) => {
@@ -118,6 +125,11 @@ export default function CardDetailPage() {
         </div>
       ))}
       {error && <p className="error">{error}</p>}
+
+      <ContactLinks
+        card={card}
+        onFollowUp={(when) => void run(() => updateCard(card.id, { followUpAt: when }))}
+      />
 
       <CardForm
         draft={card}

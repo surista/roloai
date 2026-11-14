@@ -456,3 +456,58 @@ button {
 .my-card-link {
   font-weight: 600;
 }
+
+/* Card details as links, mirroring the phone's detail screen. */
+.contact-links {
+  display: grid;
+  gap: 0;
+  margin: 0 0 20px;
+  border-radius: 10px;
+  background: light-dark(#fff, #1c1c1e);
+  overflow: hidden;
+}
+
+.contact-link-row {
+  display: grid;
+  grid-template-columns: 110px 1fr;
+  gap: 12px;
+  align-items: baseline;
+  padding: 10px 16px;
+  border-top: 1px solid light-dark(#e5e5ea, #38383a);
+}
+
+.contact-link-row:first-child {
+  border-top: none;
+}
+
+.contact-link-row dt {
+  color: light-dark(#6e6e73, #98989d);
+  font-size: 0.9rem;
+}
+
+.contact-link-row dd {
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: baseline;
+}
+
+.contact-link-row a {
+  color: light-dark(#007aff, #0a84ff);
+  text-decoration: none;
+}
+
+.contact-link-row a:hover,
+.contact-link-row a:focus-visible {
+  text-decoration: underline;
+}
+
+.contact-link-secondary {
+  font-size: 0.85rem;
+}
+
+.contact-link-hint {
+  color: light-dark(#6e6e73, #98989d);
+  font-size: 0.8rem;
+}

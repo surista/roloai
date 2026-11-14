@@ -24,6 +24,8 @@ function haystack(card: Card): string {
       card.address,
       card.website,
       card.notes,
+      card.event,
+      card.metPlace,
       card.rawOcrText,
       ...card.tags,
       ...card.emails.map((e) => e.address),

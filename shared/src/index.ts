@@ -43,6 +43,16 @@ export interface Card {
    * main list; see mine.ts.
    */
   isMine?: boolean;
+  /** Where the card was received, free text: a conference, a meeting, an introduction. */
+  event?: string;
+  /**
+   * Where the card was scanned, reverse-geocoded to a readable place ("Shibuya, Tokyo"). Only
+   * recorded when the owner has turned location on in Settings; never inferred later.
+   */
+  metPlace?: string;
+  metLocation?: { lat: number; lng: number };
+  /** When to follow up with this person (millis). Each device schedules its own reminder. */
+  followUpAt?: number;
   createdAt: number;
   updatedAt: number;
 }
@@ -227,6 +237,7 @@ export type { CardFilter } from './search';
 export { groupPairs, pairCandidates, partnerOf } from './pairing';
 export type { ListEntry } from './pairing';
 export { cardsToCsv } from './csv';
+export { mapsUrl, smsUrl, telUrl, websiteUrl, mailtoUrl, qrUrlDraft, displayName } from './links';
 export { mergeFrontBack } from './merge';
 export {
   BACKUP_FORMAT_VERSION,

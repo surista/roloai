@@ -17,7 +17,7 @@ function splitToList(value: string): string[] {
 
 export type CardFormFields = Omit<
   CardDraft,
-  'imageUrl' | 'imageBackUrl' | 'thumbUrl' | 'source' | 'rawOcrText'
+  'imageUrl' | 'imageBackUrl' | 'thumbUrl' | 'source' | 'rawOcrText' | 'metPlace' | 'metLocation' | 'followUpAt'
 >;
 
 interface Props {
@@ -44,9 +44,12 @@ export default function CardForm({ draft, imageUrl, backImageUrl, saveLabel, onS
   const [website, setWebsite] = useState(draft.website ?? '');
   const [address, setAddress] = useState(draft.address ?? '');
   const [notes, setNotes] = useState(draft.notes ?? '');
+  const [event, setEvent] = useState(draft.event ?? '');
   const [tagsText, setTagsText] = useState(draft.tags.join(', '));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Without this a successful save looked exactly like nothing happening.
+  const [savedAt, setSavedAt] = useState<number | null>(null);
   const [lightbox, setLightbox] = useState<{ src: string; alt: string } | null>(null);
 
   const handleSubmit = async (e: FormEvent) => {
@@ -56,6 +59,7 @@ export default function CardForm({ draft, imageUrl, backImageUrl, saveLabel, onS
       return;
     }
     setError(null);
+    setSavedAt(null);
     setSaving(true);
     try {
       await onSave({
@@ -68,8 +72,10 @@ export default function CardForm({ draft, imageUrl, backImageUrl, saveLabel, onS
         website: website.trim() || undefined,
         address: address.trim() || undefined,
         notes: notes.trim() || undefined,
+        event: event.trim() || undefined,
         tags: splitToList(tagsText),
       });
+      setSavedAt(Date.now());
     } catch (err) {
       console.error('Card save failed:', err);
       setError('Save failed. Check your connection and try again.');
@@ -115,10 +121,12 @@ export default function CardForm({ draft, imageUrl, backImageUrl, saveLabel, onS
       <Field label="Email(s)" value={emailsText} onChange={setEmailsText} placeholder="comma separated" />
       <Field label="Website" value={website} onChange={setWebsite} />
       <Field label="Address" value={address} onChange={setAddress} />
+      <Field label="Met at" value={event} onChange={setEvent} placeholder="Event or occasion" />
       <Field label="Tags" value={tagsText} onChange={setTagsText} placeholder="comma separated" />
       <Field label="Notes" value={notes} onChange={setNotes} multiline />
 
-      {error && <p className="error">{error}</p>}
+      {error && <p className="error" role="alert">{error}</p>}
+      {savedAt && !error && <p className="notice" role="status">Saved.</p>}
 
       <button type="submit" className="primary-button" disabled={saving}>
         {saving ? 'Saving…' : saveLabel}

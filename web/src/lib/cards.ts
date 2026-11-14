@@ -40,11 +40,18 @@ async function deleteImageByUrl(url: string): Promise<void> {
   }
 }
 
-export function subscribeToCards(onChange: (cards: Card[]) => void): () => void {
+export function subscribeToCards(
+  onChange: (cards: Card[]) => void,
+  onError: (error: Error) => void = (e) => console.error('Card listener failed:', e)
+): () => void {
   const q = query(cardsCollection, orderBy('createdAt', 'desc'));
-  return onSnapshot(q, (snapshot) => {
-    onChange(snapshot.docs.map((d) => cardFromFirestore(d.id, d.data())));
-  });
+  return onSnapshot(
+    q,
+    (snapshot) => {
+      onChange(snapshot.docs.map((d) => cardFromFirestore(d.id, d.data())));
+    },
+    onError
+  );
 }
 
 export async function updateCard(id: string, changes: Partial<CardDraft>): Promise<void> {
@@ -54,28 +61,32 @@ export async function updateCard(id: string, changes: Partial<CardDraft>): Promi
   });
 }
 
-/** Storage has no cascade delete, so the card's photos have to be removed explicitly. */
+/**
+ * Storage has no cascade delete, so the card's photos have to be removed explicitly — but only
+ * after the document is gone. Deleting the photos first meant a failed document delete left the
+ * card in the library pointing at files that no longer existed.
+ */
 export async function deleteCard(
   id: string,
   imageUrls: (string | undefined)[] = [],
   partnerId?: string
 ): Promise<void> {
+  if (!partnerId) {
+    await deleteDoc(doc(db, 'cards', id));
+  } else {
+    // One batch, so the partner is never left pointing at a card that no longer exists. Pass
+    // partnerId only for a *valid* partner: updating a missing document fails the whole batch.
+    const batch = writeBatch(db);
+    batch.delete(doc(db, 'cards', id));
+    batch.update(doc(db, 'cards', partnerId), {
+      pairedWith: deleteField(),
+      updatedAt: serverTimestamp(),
+    });
+    await batch.commit();
+  }
   await Promise.all(
     imageUrls.filter((url): url is string => Boolean(url)).map(deleteImageByUrl)
   );
-  if (!partnerId) {
-    await deleteDoc(doc(db, 'cards', id));
-    return;
-  }
-  // One batch, so the partner is never left pointing at a card that no longer exists. Pass
-  // partnerId only for a *valid* partner: updating a missing document fails the whole batch.
-  const batch = writeBatch(db);
-  batch.delete(doc(db, 'cards', id));
-  batch.update(doc(db, 'cards', partnerId), {
-    pairedWith: deleteField(),
-    updatedAt: serverTimestamp(),
-  });
-  await batch.commit();
 }
 
 /**
