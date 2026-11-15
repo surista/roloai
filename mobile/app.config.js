@@ -97,7 +97,10 @@ module.exports = {
           // When-In-Use only. Unused purpose strings with placeholder text are a review flag.
           locationAlwaysAndWhenInUsePermission: false,
           locationAlwaysPermission: false,
-          motionUsagePermission: false,
+          // expo-location links CMMotionActivityManager, so Apple rejects the binary at upload
+          // (ITMS-90683) without NSMotionUsageDescription, even though RoloAI never asks for it.
+          motionUsagePermission:
+            'RoloAI does not use motion data. This permission is never requested.',
         },
       ],
       [
