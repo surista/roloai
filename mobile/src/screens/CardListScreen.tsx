@@ -1,5 +1,5 @@
 import React, { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { View, Text, SectionList, StyleSheet, type GestureResponderEvent } from 'react-native';
+import { View, Text, SectionList, StyleSheet, type GestureResponderEvent, type LayoutChangeEvent } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
@@ -17,6 +17,7 @@ import {
   groupPairs,
   mailtoUrl,
   sortCards,
+  sortText,
   telUrl,
   type Card,
   type CardSort,
@@ -44,10 +45,14 @@ interface Section {
   data: ListEntry[];
 }
 
-/** The letter a card files under for an alphabetical sort; anything non-Latin files under "#". */
+/**
+ * The letter a card files under for an alphabetical sort. Accents fold to their base letter, as
+ * the sort itself does (Åberg sits among the A's, Ölund among the O's); anything else — another
+ * script, a digit, no name at all — files under "#".
+ */
 function sectionKey(card: Card, sort: CardSort): string {
-  const source = sort === 'firstName' ? card.firstName : sort === 'lastName' ? card.lastName : card.company;
-  const letter = (source ?? '').trim().charAt(0).toLocaleUpperCase();
+  if (sort === 'recent') return '';
+  const letter = sortText(card, sort).normalize('NFD').charAt(0).toUpperCase();
   return /[A-Z]/.test(letter) ? letter : '#';
 }
 
@@ -63,32 +68,39 @@ export default function CardListScreen({ navigation }: Props) {
   const [company, setCompany] = useState<string | undefined>();
   const [queue, setQueue] = useState<QueuedScan[]>([]);
   const listRef = useRef<SectionList<ListEntry, Section>>(null);
-  // Jumps for the A–Z index. SectionList.scrollToLocation can't be used: on this React Native
-  // version the list reports every cell at offset 0, so it always "scrolls" to the top. Instead
-  // the section's header is measured where it actually is in the scroll content.
-  const headerRefs = useRef(new Map<string, View | null>());
-  const contentHeight = useRef(0);
+  // Jumps for the A–Z index. A section's header is measured where it actually is when it's
+  // rendered; when it isn't (a long library), the jump goes to where the row-height model below
+  // puts it, which renders it, and the next attempt measures it exactly.
+  const headerRefs = useRef(new Map<string, View>());
   const scrollToSection = (i: number, attempt = 0) => {
-    const title = sections[i]?.title;
     const list = listRef.current;
     const responder = list?.getScrollResponder() as { getNativeScrollRef?: () => unknown } | undefined;
     const scrollNode = responder?.getNativeScrollRef?.();
+    const scrollTo = (y: number) => list?.getScrollResponder()?.scrollTo({ y, animated: false });
+    const title = sections[i]?.title;
     const header = title ? headerRefs.current.get(title) : undefined;
     if (header && scrollNode) {
-      header.measureLayout(
-        scrollNode as never,
-        (_x, y) => list?.getScrollResponder()?.scrollTo({ y, animated: false }),
-        () => {}
-      );
+      header.measureLayout(scrollNode as never, (_x, y) => scrollTo(y), () => {});
       return;
     }
-    // Not rendered yet (a long library): jump to roughly where it is so it renders, then measure.
-    const rows = (k: number) => sections.slice(0, k).reduce((n, sec) => n + sec.data.length + 1, 0);
-    const estimate = (rows(i) / Math.max(1, rows(sections.length))) * contentHeight.current;
-    list?.getScrollResponder()?.scrollTo({ y: estimate, animated: false });
-    if (attempt < 4) setTimeout(() => scrollToSection(i, attempt + 1), 60);
+    const offset = layout?.sectionOffsets[i];
+    if (offset === undefined || attempt >= 4) return;
+    scrollTo(offset);
+    setTimeout(() => scrollToSection(i, attempt + 1), 50);
   };
 
+  // Row heights, measured as rows render. Every row is one of two heights — with a subtitle line
+  // or without — and every section header one more, at any text size; from those the whole list's
+  // layout follows. Without getItemLayout a list can't scroll past the rows it has rendered so
+  // far, so the A–Z index couldn't reach the end of a long library.
+  const [sizes, setSizes] = useState({ listHeader: 0, header: 0, row: 0, bareRow: 0 });
+  const openCard = useCallback(
+    (cardId: string) => navigation.navigate('CardDetail', { cardId }),
+    [navigation]
+  );
+  const noteSize = useCallback((key: 'listHeader' | 'header' | 'row' | 'bareRow', height: number) => {
+    setSizes((prev) => (Math.abs(prev[key] - height) < 0.5 ? prev : { ...prev, [key]: height }));
+  }, []);
 
   // Refreshed on focus and whenever the background reader finishes one.
   useFocusEffect(
@@ -128,13 +140,42 @@ export default function CardListScreen({ navigation }: Props) {
     const byKey = new Map<string, ListEntry[]>();
     for (const entry of entries) {
       const key = sectionKey(entry.card, sort);
-      byKey.set(key, [...(byKey.get(key) ?? []), entry]);
+      const bucket = byKey.get(key);
+      if (bucket) bucket.push(entry);
+      else byKey.set(key, [entry]);
     }
+    // "#" goes last, as in Contacts, wherever the sort first met one of its cards.
+    const titles = [...byKey.keys()].sort((a, b) => (a === '#' ? 1 : b === '#' ? -1 : a < b ? -1 : 1));
     return {
-      sections: [...byKey].map(([title, data]) => ({ title, data })),
+      sections: titles.map((title) => ({ title, data: byKey.get(title)! })),
       matchCount: matches.length,
     };
   }, [cards, search, tag, company, sort]);
+
+  // Offsets for getItemLayout, indexed as SectionList counts: each section is its header, its
+  // rows, then a (zero-height) footer. The separator sits inside every row but a section's last.
+  const layout = useMemo(() => {
+    if (sort === 'recent' || !sizes.header || !(sizes.row || sizes.bareRow)) return undefined;
+    const rowHeight = (entry: ListEntry) => {
+      const bare = !entry.card.jobTitle && !entry.card.company;
+      return (bare ? sizes.bareRow : sizes.row) || sizes.row || sizes.bareRow;
+    };
+    const cells: { offset: number; length: number }[] = [];
+    const sectionOffsets: number[] = [];
+    let y = sizes.listHeader;
+    for (const section of sections) {
+      sectionOffsets.push(y);
+      cells.push({ offset: y, length: sizes.header });
+      y += sizes.header;
+      section.data.forEach((entry, k) => {
+        const length = rowHeight(entry) + (k < section.data.length - 1 ? StyleSheet.hairlineWidth : 0);
+        cells.push({ offset: y, length });
+        y += length;
+      });
+      cells.push({ offset: y, length: 0 });
+    }
+    return { cells, sectionOffsets };
+  }, [sections, sort, sizes]);
 
   const clearFilters = () => {
     setTag(undefined);
@@ -233,7 +274,7 @@ export default function CardListScreen({ navigation }: Props) {
   const readyCount = queue.filter((q) => q.draft).length;
 
   const listHeader = (
-    <View style={styles.headerStack}>
+    <View style={styles.headerStack} onLayout={(e) => noteSize('listHeader', e.nativeEvent.layout.height)}>
       {error && (
         <Banner
           symbol="exclamationmark.triangle.fill"
@@ -274,10 +315,15 @@ export default function CardListScreen({ navigation }: Props) {
   const showIndex = sort !== 'recent' && sections.length > 3 && !filtering;
 
   return (
-    <View style={styles.screen}>
+    <>
+      {/* The list is the screen's first view, not wrapped in one: that's how the navigation bar
+          finds it, to collapse the large title and search bar as it scrolls (as in Contacts). */}
       <SectionList
         ref={listRef}
-        onContentSizeChange={(_w, h) => (contentHeight.current = h)}
+        style={styles.screen}
+        getItemLayout={
+          layout && !(globalThis as { __noGIL?: boolean }).__noGIL ? (_data, index) => ({ index, ...(layout.cells[index] ?? { offset: 0, length: 0 }) }) : undefined
+        }
         sections={sections}
         keyExtractor={(item) => item.card.id}
         contentInsetAdjustmentBehavior="automatic"
@@ -291,8 +337,10 @@ export default function CardListScreen({ navigation }: Props) {
           section.title ? (
             <View
               ref={(r) => {
-                headerRefs.current.set(section.title, r);
+                if (r) headerRefs.current.set(section.title, r);
+                else headerRefs.current.delete(section.title);
               }}
+              onLayout={(e) => noteSize('header', e.nativeEvent.layout.height)}
             >
               <Text style={styles.sectionHeader} accessibilityRole="header">
                 {section.title}
@@ -317,8 +365,9 @@ export default function CardListScreen({ navigation }: Props) {
         renderItem={({ item }) => (
           <CardRow
             entry={item}
-            onOpen={() => navigation.navigate('CardDetail', { cardId: item.card.id })}
+            onOpen={openCard}
             showsChevron={!showIndex}
+            onMeasure={noteSize}
           />
         )}
       />
@@ -339,7 +388,7 @@ export default function CardListScreen({ navigation }: Props) {
         <SymbolView name="camera.viewfinder" size={22} tintColor={colors.onTint} />
         <Text style={styles.scanButtonText}>Scan Card</Text>
       </Button>
-    </View>
+    </>
   );
 }
 
@@ -347,7 +396,19 @@ export default function CardListScreen({ navigation }: Props) {
  * One card: swipe left for call/mail/delete, long-press for the full context menu, tap to open.
  * The menu is the system UIContextMenu (with the row lifted as its preview), not an action sheet.
  */
-function CardRow({ entry, onOpen, showsChevron }: { entry: ListEntry; onOpen: () => void; showsChevron: boolean }) {
+// Memoized: a library of hundreds re-renders the visible rows on every snapshot and scroll batch
+// otherwise, which is what "slow to update" from the list means.
+const CardRow = React.memo(function CardRow({
+  entry,
+  onOpen,
+  showsChevron,
+  onMeasure,
+}: {
+  entry: ListEntry;
+  onOpen: (cardId: string) => void;
+  showsChevron: boolean;
+  onMeasure: (key: 'row' | 'bareRow', height: number) => void;
+}) {
   const { card, partner } = entry;
   const swipeRef = useRef<React.ComponentRef<typeof ReanimatedSwipeable>>(null);
   const [sharing, setSharing] = useState(false);
@@ -392,12 +453,16 @@ function CardRow({ entry, onOpen, showsChevron }: { entry: ListEntry; onOpen: ()
 
   return (
     <ReanimatedSwipeable ref={swipeRef} renderRightActions={renderRightActions} overshootRight={false} friction={1.5} rightThreshold={40}>
-      <ContextMenu actions={actions} onSelect={({ nativeEvent }) => run(nativeEvent.id)}>
+      <ContextMenu
+        actions={actions}
+        onSelect={({ nativeEvent }) => run(nativeEvent.id)}
+        onLayout={(e: LayoutChangeEvent) => onMeasure(subtitle ? 'row' : 'bareRow', e.nativeEvent.layout.height)}
+      >
         <Button
           style={styles.row}
           pressedStyle={styles.rowPressed}
           hitSlop={undefined}
-          onPress={onOpen}
+          onPress={() => onOpen(card.id)}
           accessibilityLabel={[names, subtitle].filter(Boolean).join(', ')}
           accessibilityHint="Opens the card. Swipe up or down for actions."
           accessibilityActions={[
@@ -433,7 +498,7 @@ function CardRow({ entry, onOpen, showsChevron }: { entry: ListEntry; onOpen: ()
       </ContextMenu>
     </ReanimatedSwipeable>
   );
-}
+});
 
 function SwipeAction(props: { symbol: 'phone.fill' | 'envelope.fill' | 'trash.fill'; label: string; color: typeof colors.tint; onPress: () => void }) {
   return (

@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import { relabelPhones, sortCards, stripUndefined } from './index';
+import { relabelPhones, sortCards, sortText, stripUndefined } from './index';
 import { card } from './testCards';
 
 it('sorts by company with blanks last and ties by name', () => {
@@ -20,4 +20,19 @@ it('relabels edited phones by value, keeping each duplicate its own label', () =
 
 it('strips undefined but keeps empty strings', () => {
   expect(stripUndefined({ a: undefined, b: '', c: 0 })).toEqual({ b: '', c: 0 });
+});
+
+it('files a card with only a first name under it in a last-name sort', () => {
+  const only = card({ firstName: 'Maria', lastName: '' });
+  const lee = card({ firstName: 'Ann', lastName: 'Lee' });
+  const zed = card({ firstName: 'Bo', lastName: 'Zed' });
+  expect(sortCards([zed, only, lee], 'lastName').map((c) => c.firstName)).toEqual(['Ann', 'Maria', 'Bo']);
+  expect(sortText(only, 'lastName')).toBe('Maria');
+});
+
+it('keeps unnamed cards last in a name sort, whatever their company', () => {
+  const unnamed = card({ firstName: '', lastName: '', company: 'Acme' });
+  const zed = card({ firstName: 'Bo', lastName: 'Zed' });
+  expect(sortCards([unnamed, zed], 'lastName')).toEqual([zed, unnamed]);
+  expect(sortText(unnamed, 'lastName')).toBe('');
 });

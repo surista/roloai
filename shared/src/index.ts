@@ -207,10 +207,24 @@ function compareText(a: string | undefined, b: string | undefined): number {
  * return them in, which would otherwise shuffle on every snapshot.
  */
 const SORT_FIELDS: Record<Exclude<CardSort, 'recent'>, (card: Card) => (string | undefined)[]> = {
-  firstName: (card) => [card.firstName, card.lastName, card.company],
-  lastName: (card) => [card.lastName, card.firstName, card.company],
+  firstName: (card) => [sortText(card, 'firstName'), card.lastName, card.company],
+  lastName: (card) => [sortText(card, 'lastName'), card.firstName, card.company],
   company: (card) => [card.company, card.lastName, card.firstName],
 };
+
+/**
+ * The text a card is alphabetized (and A–Z indexed) by. A name sort falls back to the card's other
+ * name, as Contacts does: a card with only a first name files under it in a last-name sort rather
+ * than sinking to the end. A card with no name at all shows as "Unnamed card", so it stays at the
+ * end (under "#") rather than filing under its company's letter. A company sort keeps
+ * company-less cards last.
+ */
+export function sortText(card: Card, sort: Exclude<CardSort, 'recent'>): string {
+  const pick = (...values: (string | undefined)[]) => values.map((v) => v?.trim()).find(Boolean) ?? '';
+  if (sort === 'firstName') return pick(card.firstName, card.lastName);
+  if (sort === 'lastName') return pick(card.lastName, card.firstName);
+  return card.company?.trim() ?? '';
+}
 
 /** Sorts a card list. `recent` is returned untouched — the Firestore query already orders by createdAt desc. */
 export function sortCards(cards: Card[], sort: CardSort): Card[] {

@@ -943,12 +943,34 @@ extension CardScannerViewController {
     let longSide = max(image.extent.width, image.extent.height)
     let scale = min(1, detectionLongSide / longSide)
     let probe = image.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
-    let request = VNDetectDocumentSegmentationRequest()
-    try? VNImageRequestHandler(ciImage: probe, orientation: .up, options: [:]).perform([request])
-    if let quad = request.results?.first, quad.confidence >= 0.5, area(of: quad) >= 0.05 {
+    // Segmentation first, as in a live capture; the plain rectangle detector is the second
+    // opinion when it finds nothing or finds something no card is shaped like.
+    let segmentation = VNDetectDocumentSegmentationRequest()
+    let rectangles = VNDetectRectanglesRequest()
+    rectangles.minimumAspectRatio = 0.3
+    rectangles.minimumSize = 0.2
+    try? VNImageRequestHandler(ciImage: probe, orientation: .up, options: [:]).perform([segmentation, rectangles])
+    let candidates: [VNRectangleObservation] = (segmentation.results ?? []) + (rectangles.results ?? [])
+    let size = probe.extent.size
+    if let quad = candidates.first(where: { quad in
+      quad.confidence >= 0.5 && area(of: quad) >= 0.05 && isCardShaped(quad, in: size)
+    }) {
       return write(sharpened(uprightCard(crop(image, to: quad))))
     }
     return write(image)
+  }
+
+  /// Whether a quad has a business card's proportions. Cards run from square to about 2:1 (the
+  /// US one is 1.75:1); a long thin strip is a desk edge or a shadow, not a card, and cropping to
+  /// it throws away the card the owner chose.
+  private static func isCardShaped(_ quad: VNRectangleObservation, in size: CGSize) -> Bool {
+    func length(_ a: CGPoint, _ b: CGPoint) -> CGFloat {
+      hypot((a.x - b.x) * size.width, (a.y - b.y) * size.height)
+    }
+    let width = (length(quad.topLeft, quad.topRight) + length(quad.bottomLeft, quad.bottomRight)) / 2
+    let height = (length(quad.topLeft, quad.bottomLeft) + length(quad.topRight, quad.bottomRight)) / 2
+    guard min(width, height) > 0 else { return false }
+    return max(width, height) / min(width, height) <= 2.6
   }
 
   private static func write(_ image: CIImage) -> String? {

@@ -39,6 +39,32 @@ module.exports = {
         NSCameraUsageDescription:
           'RoloAI uses the camera to photograph business cards and scan QR codes so it can save contact details.',
       },
+      // Must match the App Store privacy label (docs/app-store-privacy.md). The accessed-API
+      // reasons are the ones prebuild generated before this was set, listed so none are lost.
+      privacyManifests: {
+        NSPrivacyTracking: false,
+        NSPrivacyAccessedAPITypes: [
+          { NSPrivacyAccessedAPIType: 'NSPrivacyAccessedAPICategoryFileTimestamp', NSPrivacyAccessedAPITypeReasons: ['C617.1'] },
+          { NSPrivacyAccessedAPIType: 'NSPrivacyAccessedAPICategoryUserDefaults', NSPrivacyAccessedAPITypeReasons: ['CA92.1'] },
+          { NSPrivacyAccessedAPIType: 'NSPrivacyAccessedAPICategorySystemBootTime', NSPrivacyAccessedAPITypeReasons: ['35F9.1'] },
+        ],
+        NSPrivacyCollectedDataTypes: [
+          'NSPrivacyCollectedDataTypeName',
+          'NSPrivacyCollectedDataTypeEmailAddress',
+          'NSPrivacyCollectedDataTypePhoneNumber',
+          'NSPrivacyCollectedDataTypePhysicalAddress',
+          'NSPrivacyCollectedDataTypeContacts',
+          'NSPrivacyCollectedDataTypePhotosorVideos',
+          'NSPrivacyCollectedDataTypeOtherUserContent',
+          'NSPrivacyCollectedDataTypePreciseLocation',
+          'NSPrivacyCollectedDataTypeUserID',
+        ].map((type) => ({
+          NSPrivacyCollectedDataType: type,
+          NSPrivacyCollectedDataTypeLinked: true,
+          NSPrivacyCollectedDataTypeTracking: false,
+          NSPrivacyCollectedDataTypePurposes: ['NSPrivacyCollectedDataTypePurposeAppFunctionality'],
+        })),
+      },
     },
     web: {
       favicon: './assets/favicon.png',

@@ -22,16 +22,18 @@ function emptyDraft(source: CardDraft['source']): CardDraft {
 export function parseQrPayload(data: string): CardDraft {
   const draft = emptyDraft('qr');
   draft.rawOcrText = data;
+  // Generators disagree on case and some prefix a newline or BOM; the headers are case-insensitive.
+  const payload = data.replace(/^\uFEFF/, '').trim();
 
-  if (data.startsWith('BEGIN:VCARD')) {
+  if (/^BEGIN:VCARD/i.test(payload)) {
     // Delegates to the shared RFC 6350 parser (used for .vcf import too) rather than a second,
     // simpler implementation here — that one unescapes values and splits multi-valued TYPE
     // params correctly, which a from-scratch parser is easy to get subtly wrong.
-    const [parsed] = parseVCards(data);
+    const [parsed] = parseVCards(payload);
     return parsed ? { ...draft, ...parsed, source: 'qr' } : draft;
   }
-  if (data.startsWith('MECARD:')) {
-    return { ...draft, ...parseMeCard(data) };
+  if (/^MECARD:/i.test(payload)) {
+    return { ...draft, ...parseMeCard(payload) };
   }
 
   // Unknown QR format — fall back to treating the raw payload as notes so nothing is lost.
@@ -41,12 +43,15 @@ export function parseQrPayload(data: string): CardDraft {
 
 function parseMeCard(data: string): Partial<CardDraft> {
   const result: Partial<CardDraft> = { phones: [], emails: [] };
-  const body = data.replace(/^MECARD:/, '').replace(/;$/, '');
-  const fields = body.split(';');
+  const body = data.replace(/^MECARD:/i, '');
+  // Fields end at an unescaped `;`; `\;`, `\:`, `\,` and `\\` stand for the literal character.
+  const fields = body.split(/(?<!\\);/);
 
   for (const field of fields) {
-    const [rawKey, ...rest] = field.split(':');
-    const value = rest.join(':').trim();
+    const colon = field.indexOf(':');
+    if (colon < 0) continue;
+    const rawKey = field.slice(0, colon);
+    const value = field.slice(colon + 1).replace(/\\([\\;:,"])/g, '$1').trim();
     if (!value) continue;
     const key = rawKey.toUpperCase();
 

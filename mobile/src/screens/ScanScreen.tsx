@@ -164,7 +164,7 @@ export default function ScanScreen({ navigation, route }: Props) {
             <Text style={styles.subtitle}>
               Many cards have details on both sides — English and Japanese, say. Add the back too?
             </Text>
-            <Button style={styles.primaryButton} onPress={handleScanBack}>
+            <Button style={styles.primaryButton} onPress={handleScanBack} accessibilityLabel="Scan Back">
               <SymbolView name="camera.fill" size={18} tintColor="#000" />
               <Text style={styles.primaryButtonText}>Scan Back</Text>
             </Button>
@@ -177,7 +177,7 @@ export default function ScanScreen({ navigation, route }: Props) {
           </View>
         ) : (
           <View style={styles.photoContainer}>
-            <SymbolView name="camera.viewfinder" size={64} tintColor="#fff" />
+            <SymbolView name="camera.viewfinder" size={64} tintColor="#fff" accessibilityElementsHidden importantForAccessibility="no-hide-descendants" />
             <Text style={styles.title} accessibilityRole="header">
               {mine ? 'Scan Your Card' : 'Scan a Business Card'}
             </Text>
@@ -185,7 +185,7 @@ export default function ScanScreen({ navigation, route }: Props) {
               Hold the card flat. RoloAI finds the edges and takes the photo when it’s sharp — or tap
               the shutter yourself.
             </Text>
-            <Button style={styles.primaryButton} onPress={handleScanFront}>
+            <Button style={styles.primaryButton} onPress={handleScanFront} accessibilityLabel="Scan Card">
               <SymbolView name="camera.fill" size={18} tintColor="#000" />
               <Text style={styles.primaryButtonText}>Scan Card</Text>
             </Button>
