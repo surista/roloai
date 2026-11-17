@@ -128,12 +128,14 @@ export default function CardListScreen({ navigation }: Props) {
   const companies = useMemo(() => companyCounts(cards).slice(0, TOP_COMPANIES), [cards]);
   const filtering = Boolean(search.trim() || tag || company);
 
+  // Pair up the *whole* sorted library and filter the rows afterwards: filtering first would
+  // drop one half of a pair whenever only it matched and show the other as if it had no partner.
+  // Sorted only when the library or the sort changes, not on every keystroke or filter.
+  const sortedEntries = useMemo(() => groupPairs(sortCards(cards, sort)), [cards, sort]);
   const { sections, matchCount } = useMemo(() => {
     const matches = filterCards(cards, { search, tag, company });
     const matchIds = new Set(matches.map((c) => c.id));
-    // Pair up the *whole* sorted library and filter the rows afterwards: filtering first would
-    // drop one half of a pair whenever only it matched and show the other as if it had no partner.
-    const entries = groupPairs(sortCards(cards, sort)).filter(
+    const entries = sortedEntries.filter(
       ({ card, partner }) => matchIds.has(card.id) || (partner && matchIds.has(partner.id))
     );
     if (sort === 'recent') return { sections: [{ title: '', data: entries }], matchCount: matches.length };
@@ -150,7 +152,7 @@ export default function CardListScreen({ navigation }: Props) {
       sections: titles.map((title) => ({ title, data: byKey.get(title)! })),
       matchCount: matches.length,
     };
-  }, [cards, search, tag, company, sort]);
+  }, [cards, sortedEntries, search, tag, company, sort]);
 
   // Offsets for getItemLayout, indexed as SectionList counts: each section is its header, its
   // rows, then a (zero-height) footer. The separator sits inside every row but a section's last.
@@ -325,6 +327,10 @@ export default function CardListScreen({ navigation }: Props) {
           layout && !(globalThis as { __noGIL?: boolean }).__noGIL ? (_data, index) => ({ index, ...(layout.cells[index] ?? { offset: 0, length: 0 }) }) : undefined
         }
         sections={sections}
+        // Rows are heavy (swipe actions, a native context menu, SF Symbols). The default window
+        // keeps ~21 screens of them mounted, so every filter or search change re-rendered hundreds
+        // of rows and took seconds; a few screens either side still scrolls without blanking.
+        windowSize={5}
         keyExtractor={(item) => item.card.id}
         contentInsetAdjustmentBehavior="automatic"
         keyboardDismissMode="on-drag"

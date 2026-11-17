@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, TextInput, ScrollView, StyleSheet, Alert, ActivityIndicator } from 'react-native';
+import { View, Text, TextInput, ScrollView, StyleSheet, Alert, ActivityIndicator, ActionSheetIOS } from 'react-native';
+import { usePreventRemove } from '@react-navigation/native';
 import QRCode from 'react-native-qrcode-svg';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { cardToVCard, type Card } from '@roloai/shared';
@@ -45,6 +46,9 @@ export default function MyCardScreen({ navigation }: Props) {
   const [saving, setSaving] = useState(false);
   const [busy, setBusy] = useState(false);
   const [dirty, setDirty] = useState(false);
+  // Typed by the owner, as opposed to dirty only because the old local copy was loaded: only
+  // their own edits are worth a "Discard?" on the way out.
+  const [edited, setEdited] = useState(false);
 
   // Seed the form once: from the doc, else from the old local file. Later snapshots (our own
   // save, another device) must not overwrite what is being typed.
@@ -75,7 +79,23 @@ export default function MyCardScreen({ navigation }: Props) {
   const update = (key: keyof MyCard, value: string) => {
     setForm((f) => ({ ...f, [key]: value }));
     setDirty(true);
+    setEdited(true);
   };
+
+  // Back (button or swipe) with unsaved edits asks first, as the card edit sheet does.
+  usePreventRemove(dirty && edited, ({ data }) => {
+    ActionSheetIOS.showActionSheetWithOptions(
+      {
+        title: 'Discard your changes?',
+        options: ['Discard Changes', 'Keep Editing'],
+        destructiveButtonIndex: 0,
+        cancelButtonIndex: 1,
+      },
+      (i) => {
+        if (i === 0) navigation.dispatch(data.action);
+      }
+    );
+  });
 
   const save = async () => {
     if (saving) return;

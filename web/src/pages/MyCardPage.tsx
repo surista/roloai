@@ -11,6 +11,7 @@ import {
 import { downloadFile } from '../lib/backup';
 import { saveMyCard, subscribeToCards } from '../lib/cards';
 import ShareMenu from '../components/ShareMenu';
+import { useUnsavedChangesGuard } from '../lib/useUnsavedChangesGuard';
 
 /** Where My Card lived before it became a synced card; read once as a prefill, never deleted. */
 const LEGACY_KEY = 'roloai.myCard';
@@ -98,6 +99,7 @@ export default function MyCardPage() {
   const [cards, setCards] = useState<Card[] | null>(null);
   const [form, setForm] = useState<Form>(EMPTY);
   const [dirty, setDirty] = useState(false);
+  useUnsavedChangesGuard(dirty);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);

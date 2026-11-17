@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useUnsavedChangesGuard } from '../lib/useUnsavedChangesGuard';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { doc, onSnapshot } from 'firebase/firestore';
 import {
@@ -34,6 +35,8 @@ export default function CardDetailPage() {
   // only ever sees this card.
   const [cards, setCards] = useState<Card[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [dirty, setDirty] = useState(false);
+  const allowLeave = useUnsavedChangesGuard(dirty);
 
   useEffect(() => {
     if (!cardId) return;
@@ -61,6 +64,7 @@ export default function CardDetailPage() {
     if (!cardId) return;
     if (!confirm(`Delete ${card.firstName} ${card.lastName}? Its photos are deleted too.`)) return;
     // Leave first: the listener drops the card at once, and the delete reports its own failure.
+    allowLeave();
     navigate('/');
     try {
       await deleteCard(cardId, cardImageUrls(card), partner?.id);
@@ -132,7 +136,11 @@ export default function CardDetailPage() {
       />
 
       <CardForm
+        // A fresh form per card: following "Also on file" to the linked card must not carry this
+        // card's values over (and then save them onto the other one).
+        key={card.id}
         draft={card}
+        onDirtyChange={setDirty}
         imageUrl={card.imageUrl || undefined}
         backImageUrl={card.imageBackUrl || undefined}
         saveLabel="Save Changes"
@@ -144,7 +152,7 @@ export default function CardDetailPage() {
               `This looks like a duplicate of ${duplicates.map((d) => displayName(d.card)).join(', ')}. Save anyway?`
             )
           ) {
-            return;
+            return false;
           }
           await updateCard(cardId!, fields);
         }}

@@ -2,18 +2,35 @@ import type { Card } from './index';
 
 /**
  * Lower-cases and strips accents and width variants, so "José" matches "jose" and full-width
- * "ＡＣＭＥ" matches "acme". NFKC also folds half-width katakana to full-width.
+ * "ＡＣＭＥ" matches "acme". NFKC also folds half-width katakana to full-width. Apostrophes go
+ * altogether: iOS keyboards type a curly ’ where a card has a straight ', and people search
+ * "obrien" for "O'Brien" anyway.
  */
 export function foldText(text: string): string {
   return text
     .normalize('NFKD')
     .replace(/[̀-ͯ]/g, '')
     .normalize('NFKC')
+    .replace(/['‘’ʼ`´]/g, '')
     .toLowerCase();
 }
 
-/** Everything about a card the search box should be able to find, folded once. */
+/**
+ * Everything about a card the search box should be able to find, folded once per card object:
+ * cards are replaced (not mutated) when they change, so the cache can't go stale, and typing
+ * doesn't re-normalise the whole library on every keystroke.
+ */
+const haystacks = new WeakMap<Card, string>();
 function haystack(card: Card): string {
+  let text = haystacks.get(card);
+  if (text === undefined) {
+    text = buildHaystack(card);
+    haystacks.set(card, text);
+  }
+  return text;
+}
+
+function buildHaystack(card: Card): string {
   return foldText(
     [
       card.firstName,

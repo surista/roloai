@@ -166,7 +166,8 @@ export default function SettingsPage() {
         <h2>Export</h2>
         <p className="settings-hint">
           {cards.length} {cards.length === 1 ? 'card' : 'cards'}. Exports carry links to the card
-          photos rather than the images themselves, so they resolve only while you are signed in.
+          photos rather than the images themselves. Anyone with an export file can open those
+          photos, so share it with care.
         </p>
         <div className="settings-actions">
           <button

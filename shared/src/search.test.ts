@@ -39,3 +39,10 @@ it('lists tags and company counts', () => {
   expect(allTags([a, b])).toEqual(['a', 'b']);
   expect(companyCounts([a, b, card()])).toEqual([{ company: 'Acme', count: 2 }]);
 });
+
+describe('apostrophes', () => {
+  const obrien = card({ firstName: 'Liam', lastName: "O'Brien" });
+  it.each(["o'brien", 'O’Brien', 'obrien', 'O‘Brien'])('%s finds O\'Brien', (query) => {
+    expect(matchesSearch(obrien, query)).toBe(true);
+  });
+});

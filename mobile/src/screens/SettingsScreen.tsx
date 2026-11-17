@@ -220,7 +220,7 @@ export default function SettingsScreen({ navigation }: Props) {
 
       <Group
         header="Export and Import"
-        footer="Exports link to the card photos rather than containing them, so the links work only while you’re signed in. A .json backup restores cards exactly, overwriting any with the same id; a .vcf file adds new cards and skips likely duplicates."
+        footer="Exports link to the card photos rather than containing them. Anyone with an export file can open those photos, so share it with care. A .json backup restores cards exactly, overwriting any with the same id; a .vcf file adds new cards and skips likely duplicates."
       >
         <Row first symbol="externaldrive.fill" symbolBg={colors.tint} label="Export Backup (.json)" disabled={!!busy} onPress={() => handleExport('json')} />
         <Row symbol="person.2.fill" symbolBg={colors.tint} label="Export Contacts (.vcf)" disabled={!!busy} onPress={() => handleExport('vcf')} />

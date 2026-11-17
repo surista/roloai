@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { relabelPhones, relabelEmails, type CardDraft } from '@roloai/shared';
 import Lightbox from './Lightbox';
 
@@ -30,27 +30,87 @@ interface Props {
    * `undefined` would make updateCard's deleteField() mapping wipe the card's photos on a plain
    * text edit.
    */
-  onSave: (fields: CardFormFields) => Promise<void>;
+  /** Resolves `false` when nothing was saved after all (the owner backed out of a prompt). */
+  onSave: (fields: CardFormFields) => Promise<boolean | void>;
+  /** Told whenever the inputs start or stop differing from the saved card. */
+  onDirtyChange?: (dirty: boolean) => void;
   extraAction?: { label: string; onClick: () => void; destructive?: boolean };
 }
 
-export default function CardForm({ draft, imageUrl, backImageUrl, saveLabel, onSave, extraAction }: Props) {
-  const [firstName, setFirstName] = useState(draft.firstName);
-  const [lastName, setLastName] = useState(draft.lastName);
-  const [jobTitle, setJobTitle] = useState(draft.jobTitle ?? '');
-  const [company, setCompany] = useState(draft.company ?? '');
-  const [phonesText, setPhonesText] = useState(joinPhones(draft.phones));
-  const [emailsText, setEmailsText] = useState(joinEmails(draft.emails));
-  const [website, setWebsite] = useState(draft.website ?? '');
-  const [address, setAddress] = useState(draft.address ?? '');
-  const [notes, setNotes] = useState(draft.notes ?? '');
-  const [event, setEvent] = useState(draft.event ?? '');
-  const [tagsText, setTagsText] = useState(draft.tags.join(', '));
+/** The form's editable text, as the inputs hold it. */
+interface Values {
+  firstName: string;
+  lastName: string;
+  jobTitle: string;
+  company: string;
+  phonesText: string;
+  emailsText: string;
+  website: string;
+  address: string;
+  notes: string;
+  event: string;
+  tagsText: string;
+}
+
+function valuesFromDraft(draft: CardDraft): Values {
+  return {
+    firstName: draft.firstName,
+    lastName: draft.lastName,
+    jobTitle: draft.jobTitle ?? '',
+    company: draft.company ?? '',
+    phonesText: joinPhones(draft.phones),
+    emailsText: joinEmails(draft.emails),
+    website: draft.website ?? '',
+    address: draft.address ?? '',
+    notes: draft.notes ?? '',
+    event: draft.event ?? '',
+    tagsText: draft.tags.join(', '),
+  };
+}
+
+const sameValues = (a: Values, b: Values): boolean =>
+  (Object.keys(a) as (keyof Values)[]).every((k) => a[k] === b[k]);
+
+export default function CardForm({
+  draft,
+  imageUrl,
+  backImageUrl,
+  saveLabel,
+  onSave,
+  onDirtyChange,
+  extraAction,
+}: Props) {
+  // `base` is the version of the card the inputs were filled from. The card is live (the phone,
+  // another tab), so when it changes underneath an untouched form the form follows it; when the
+  // owner has edits in progress it says so instead, rather than letting Save silently put the
+  // older values back.
+  const incoming = useMemo(() => valuesFromDraft(draft), [draft]);
+  const [values, setValues] = useState(incoming);
+  const [base, setBase] = useState(incoming);
+  const dirty = !sameValues(values, base);
+  const changedElsewhere = !sameValues(incoming, base);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // Without this a successful save looked exactly like nothing happening.
   const [savedAt, setSavedAt] = useState<number | null>(null);
   const [lightbox, setLightbox] = useState<{ src: string; alt: string } | null>(null);
+
+  const loadLatest = () => {
+    setValues(incoming);
+    setBase(incoming);
+  };
+  useEffect(() => {
+    if (changedElsewhere && !dirty && !saving) loadLatest();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [changedElsewhere, dirty, saving]);
+  useEffect(() => onDirtyChange?.(dirty), [dirty, onDirtyChange]);
+
+  const set = (key: keyof Values) => (value: string) => {
+    setValues((v) => ({ ...v, [key]: value }));
+    setSavedAt(null);
+  };
+  const { firstName, lastName, jobTitle, company, phonesText, emailsText, website, address, notes, event, tagsText } =
+    values;
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -62,7 +122,7 @@ export default function CardForm({ draft, imageUrl, backImageUrl, saveLabel, onS
     setSavedAt(null);
     setSaving(true);
     try {
-      await onSave({
+      const saved = await onSave({
         firstName: firstName.trim(),
         lastName: lastName.trim(),
         jobTitle: jobTitle.trim() || undefined,
@@ -75,6 +135,10 @@ export default function CardForm({ draft, imageUrl, backImageUrl, saveLabel, onS
         event: event.trim() || undefined,
         tags: splitToList(tagsText),
       });
+      if (saved === false) return;
+      // What was just written is now the version the form reflects; the listener's copy of it
+      // (trimmed, normalised) replaces the inputs once it arrives.
+      setBase(values);
       setSavedAt(Date.now());
     } catch (err) {
       console.error('Card save failed:', err);
@@ -113,18 +177,26 @@ export default function CardForm({ draft, imageUrl, backImageUrl, saveLabel, onS
         <Lightbox src={lightbox.src} alt={lightbox.alt} onClose={() => setLightbox(null)} />
       )}
 
-      <Field label="First name" value={firstName} onChange={setFirstName} />
-      <Field label="Last name" value={lastName} onChange={setLastName} />
-      <Field label="Job title" value={jobTitle} onChange={setJobTitle} />
-      <Field label="Company" value={company} onChange={setCompany} />
-      <Field label="Phone(s)" value={phonesText} onChange={setPhonesText} placeholder="comma separated" />
-      <Field label="Email(s)" value={emailsText} onChange={setEmailsText} placeholder="comma separated" />
-      <Field label="Website" value={website} onChange={setWebsite} />
-      <Field label="Address" value={address} onChange={setAddress} />
-      <Field label="Met at" value={event} onChange={setEvent} placeholder="Event or occasion" />
-      <Field label="Tags" value={tagsText} onChange={setTagsText} placeholder="comma separated" />
-      <Field label="Notes" value={notes} onChange={setNotes} multiline />
+      <Field label="First name" value={firstName} onChange={set('firstName')} />
+      <Field label="Last name" value={lastName} onChange={set('lastName')} />
+      <Field label="Job title" value={jobTitle} onChange={set('jobTitle')} />
+      <Field label="Company" value={company} onChange={set('company')} />
+      <Field label="Phone(s)" value={phonesText} onChange={set('phonesText')} placeholder="comma separated" />
+      <Field label="Email(s)" value={emailsText} onChange={set('emailsText')} placeholder="comma separated" />
+      <Field label="Website" value={website} onChange={set('website')} />
+      <Field label="Address" value={address} onChange={set('address')} />
+      <Field label="Met at" value={event} onChange={set('event')} placeholder="Event or occasion" />
+      <Field label="Tags" value={tagsText} onChange={set('tagsText')} placeholder="comma separated" />
+      <Field label="Notes" value={notes} onChange={set('notes')} multiline />
 
+      {changedElsewhere && dirty && !saving && (
+        <p className="notice" role="status">
+          This card was changed somewhere else while you were editing.{' '}
+          <button type="button" className="link-button" onClick={loadLatest}>
+            Discard my edits and load the latest
+          </button>
+        </p>
+      )}
       {error && <p className="error" role="alert">{error}</p>}
       {savedAt && !error && <p className="notice" role="status">Saved.</p>}
 

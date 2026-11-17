@@ -194,11 +194,15 @@ export const CARD_SORT_OPTIONS: { value: CardSort; label: string }[] = [
  * localeCompare (not `<`) is what orders accented and non-Latin names the way a reader expects
  * — `'Ø' < 'A'` is true by code point and wrong by every other measure.
  */
+let collator: Intl.Collator | undefined;
 function compareText(a: string | undefined, b: string | undefined): number {
   const left = (a ?? '').trim();
   const right = (b ?? '').trim();
   if (!left || !right) return left ? -1 : right ? 1 : 0;
-  return left.localeCompare(right, undefined, { sensitivity: 'base', numeric: true });
+  // One collator for every comparison: localeCompare with options builds a new one per call,
+  // which on the phone's JS engine made sorting a few hundred cards take seconds.
+  collator ??= new Intl.Collator(undefined, { sensitivity: 'base', numeric: true });
+  return collator.compare(left, right);
 }
 
 /**
@@ -230,17 +234,18 @@ export function sortText(card: Card, sort: Exclude<CardSort, 'recent'>): string 
 export function sortCards(cards: Card[], sort: CardSort): Card[] {
   if (sort === 'recent') return cards;
   const fieldsOf = SORT_FIELDS[sort];
-  return [...cards].sort((a, b) => {
-    const left = fieldsOf(a);
-    const right = fieldsOf(b);
-    for (let i = 0; i < left.length; i++) {
-      const result = compareText(left[i], right[i]);
+  // Each card's sort fields worked out once, not on every one of the n·log n comparisons.
+  const keyed = cards.map((card) => ({ card, fields: fieldsOf(card) }));
+  keyed.sort((a, b) => {
+    for (let i = 0; i < a.fields.length; i++) {
+      const result = compareText(a.fields[i], b.fields[i]);
       if (result !== 0) return result;
     }
     // Everything compared equal, so fall back to the default order rather than leaving it to
     // sort stability across two different engines.
-    return b.createdAt - a.createdAt;
+    return b.card.createdAt - a.card.createdAt;
   });
+  return keyed.map(({ card }) => card);
 }
 
 export { cardToVCard, cardsToVCard, parseVCards } from './vcard';
